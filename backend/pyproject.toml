@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "origami-evolve"
+version = "0.1.0"
+description = "DNA origami dataset management and GA optimization (research prototype)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "pymongo>=4.13",
+    "redis>=5.0.1",
+    "celery[redis]>=5.4",
+    "numpy>=2.0",
+    "ijson>=3.3",
+    "pygad>=3.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx2>=2.13",  # starlette TestClient transport
+    "hypothesis>=6.112",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "mongomock>=4.3",  # in-memory MongoDB for tests without Docker
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/origami_core", "src/origami_api", "src/origami_worker"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not slow'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "slow: long-running scale tests (deselect with -m 'not slow')",
+    "services: requires live MongoDB/Redis (docker compose up)",
+]
+filterwarnings = ["error::DeprecationWarning:origami_.*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "BLE", "ASYNC", "RUF"]
+ignore = ["S101"]  # assert is fine in tests and invariants
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["S311"]  # seeded PRNG for synthetic data, not security
+"tests/*" = ["S311"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["origami_core", "origami_api", "origami_worker"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "origami_core.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "origami_worker.*"
+disallow_untyped_decorators = false  # Celery's @task is untyped
