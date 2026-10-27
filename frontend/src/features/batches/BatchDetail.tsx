@@ -7,12 +7,13 @@ import { ErrorMessage } from "../../components/ErrorMessage";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useToken } from "../../components/TokenContext";
 import { formatDate } from "../../lib/format";
+import { FitnessValue } from "./FitnessValue";
 import { JobResult } from "./JobResult";
 import {
   bestFitness,
   canCancelJob,
   canRetryJob,
-  formatFitness,
+  GA_DEFAULTS,
   isBatchActive,
   isJobActive,
   POLL_INTERVAL_MS,
@@ -30,6 +31,14 @@ function Progress({ job }: { job: JobOut }) {
       </span>
     </div>
   );
+}
+
+/** The method a job actually ran (from its result) or, before it finishes, the one requested. */
+function methodLabel(job: JobOut): string {
+  const used = job.result?.method;
+  if (used === "exhaustive") return "exhaustive";
+  if (used === "ga") return "GA";
+  return job.method === "auto" ? "auto" : job.method === "exhaustive" ? "exhaustive" : "GA";
 }
 
 export function BatchDetail() {
@@ -128,8 +137,25 @@ export function BatchDetail() {
         <p className="mt-3 text-xs text-slate-500">
           Created {formatDate(b.created_at)}
           {b.finished_at ? ` · finished ${formatDate(b.finished_at)}` : ""} · seed {String(b.params.seed ?? "—")} ·
-          fitness <span className="font-mono">{b.fitness.name}</span> ({b.fitness.kind})
+          fitness <span className="font-mono">{b.fitness.name}</span> ({b.fitness.kind}) · method{" "}
+          <span className="font-mono">{b.method}</span>
         </p>
+        <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600" aria-label="GA settings used">
+          {(Object.keys(GA_DEFAULTS) as (keyof typeof GA_DEFAULTS)[]).map((k) => (
+            <div key={k} className="flex gap-1">
+              <dt className="text-slate-500">{k.replaceAll("_", " ")}</dt>
+              <dd className="tabular-nums">
+                {String(b.params[k] ?? "—")}
+                {b.params[k] !== undefined && b.params[k] !== GA_DEFAULTS[k] ? " (custom)" : ""}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {b.method !== "ga" && (
+          <p className="mt-1 text-xs text-slate-500">
+            GA settings apply only to jobs that ran the GA; each job&apos;s method is shown below.
+          </p>
+        )}
         {active && <p className="mt-2 text-sm text-sky-800">Jobs are running; this page updates automatically.</p>}
         <div className="mt-4">
           <button
@@ -161,6 +187,7 @@ export function BatchDetail() {
                 <tr>
                   <th className="py-2 pr-4">Design</th>
                   <th className="py-2 pr-4">Status</th>
+                  <th className="py-2 pr-4">Method</th>
                   <th className="py-2 pr-4">Progress</th>
                   <th className="py-2 pr-4 text-right">Best fitness</th>
                   <th className="py-2 pr-4 text-right">Attempt</th>
@@ -178,10 +205,17 @@ export function BatchDetail() {
                         <span className="ml-1 text-xs text-slate-500">cancelling…</span>
                       )}
                     </td>
+                    <td className="py-2 pr-4 text-xs">{methodLabel(job)}</td>
                     <td className="py-2 pr-4">
                       <Progress job={job} />
                     </td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{formatFitness(bestFitness(job))}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">
+                      <FitnessValue
+                        fitness={job.fitness}
+                        score={bestFitness(job)}
+                        components={job.result?.best_components as Record<string, unknown> | undefined}
+                      />
+                    </td>
                     <td className="py-2 pr-4 text-right tabular-nums">{job.attempt}</td>
                     <td className="py-2 pr-4 text-xs text-red-800">
                       {job.error ? String(job.error.message ?? job.error.code ?? "Failed") : ""}
@@ -230,6 +264,7 @@ export function BatchDetail() {
           key={resultJobId}
           jobId={resultJobId}
           status={jobs.data?.items.find((j) => j.id === resultJobId)?.status}
+          fitness={jobs.data?.items.find((j) => j.id === resultJobId)?.fitness ?? b.fitness.name}
           scrollIntoView={scrollToPanel}
           onClose={() => openAnalysis(null)}
         />

@@ -657,3 +657,36 @@ Bearer API tokens (hashed at rest), CORS allowlist, request size limits, strict 
   child structure with provenance. It is tested only with a stand-in executable; oxDNA is not installed and no real
   structure file has been processed.
 
+**Batch usability (branch fix/batch-usability)**
+- **Objective compatibility at creation.** `POST /batches` loads every resolved design and calls the objective's own
+  `check_design()` before anything is stored. Incompatible designs give 422 listing up to 20 external ids with the
+  reason, and no batch, job or queue message is created. Before, the worker failed every job with `FitnessError`.
+  `GET /datasets/{id}/compatibility?fitness=` reports `{design_id, external_id, compatible, reason}` per design,
+  paged like `/designs`. The batch form disables incompatible designs with the reason and shows a notice when the
+  default demo objective cannot be used. The worker still checks (a design could change after creation).
+- **Search method.** `method: auto | ga | exhaustive` (default `auto`). The worker resolves `auto`: exhaustive
+  enumeration when a design has at most `ORIGAMI_EXHAUSTIVE_AUTO_MAX` (4096) combinations, otherwise the GA.
+  `exhaustive_optimize` (in `origami_core.ga.optimizer`) returns the existing `OptimizationResult` shape with
+  `method`, a `note`, an empty `fitness_history`, `final_population_fitness: null` and the top 10 of all
+  combinations; ties resolve like the GA (lexicographically smallest genome). The method used is stored in the
+  result and job summary. Results stored earlier have no `method` and read as `ga`. Explicit `exhaustive` above
+  `ORIGAMI_EXHAUSTIVE_MAX_COMBINATIONS` is refused with 422. Exhaustive runs report no per-generation progress or
+  cancellation (they are small by construction).
+- **Behaviour change:** with the default `auto`, the 8-combination example designs are now enumerated instead of
+  run through the GA. Tests that exercise generations, progress or cancellation request `method: "ga"`.
+- **Configurable GA settings.** `population_size`, `generations`, `mutation_rate`, `crossover_rate`, `elitism`,
+  `tournament_size` are optional in `POST /batches`; omitted fields keep the defaults (unchanged: 50 / 100 / 0.05 /
+  0.8 / 2 / 3, seed 42). `GAParameters` validates them (422), with server limits `ORIGAMI_GA_MAX_POPULATION` (500)
+  and `ORIGAMI_GA_MAX_GENERATIONS` (1000). The values used are stored in batch and job `params` and shown on the
+  batch page. `JobOut` now also exposes `method`, `fitness` and `params`.
+- **Demo objective display.** Shown as "mean GC deviation = X (lower is better)" (from `best_components`, or the
+  negated score, which is the definition) with the stored score in smaller text. Fitness formulas and stored values
+  are unchanged.
+- **Structures page** (`/structures`): oxDNA (topology then configuration) and caDNAno uploads as raw bodies, a
+  status list with origin, issue codes and viewer links, and Convert only when `GET /structures/tools` reports
+  tacoxDNA. This closes the "no upload UI" gap noted for M7.
+- **Select all designs in dataset** omits `design_ids` so the server uses every design (all pages).
+- **Bundle:** three.js and @react-three/* are split into their own chunks behind the viewer's lazy import (rolldown
+  `codeSplitting` groups with `includeDependenciesRecursively: false`, so react stays in the entry chunk). three.js
+  alone is ~756 kB minified (mostly the single `three.core.js` module), so it cannot be split under 500 kB.
+  `chunkSizeWarningLimit` is 800 kB, and the entry chunk is ~400 kB.

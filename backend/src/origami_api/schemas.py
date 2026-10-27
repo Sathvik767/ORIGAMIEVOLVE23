@@ -1,7 +1,7 @@
 """Response DTOs. Kept separate from Mongo documents so storage fields never leak by accident."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -94,6 +94,23 @@ class BatchCreate(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     # Objective name from GET /fitness-functions; default keeps the original behaviour.
     fitness: str = Field(default="synthetic_gc_balance_demo", max_length=100)
+    # "auto": exhaustive search when a design has <= exhaustive_auto_max combinations, else the GA.
+    method: Literal["auto", "ga", "exhaustive"] = "auto"
+    # Optional GA overrides; omitted fields keep the GAParameters defaults. Checked by GAParameters
+    # and the server limits (ga_max_population, ga_max_generations).
+    population_size: int | None = None
+    generations: int | None = None
+    mutation_rate: float | None = None
+    crossover_rate: float | None = None
+    elitism: int | None = None
+    tournament_size: int | None = None
+
+
+class DesignCompatibility(BaseModel):
+    design_id: str
+    external_id: str
+    compatible: bool
+    reason: str | None = None
 
 
 class BatchOut(BaseModel):
@@ -105,6 +122,7 @@ class BatchOut(BaseModel):
     total_jobs: int
     params: dict[str, Any]
     fitness: dict[str, str]
+    method: str = "ga"  # requested method: auto | ga | exhaustive (older batches always ran the GA)
     created_at: datetime
     updated_at: datetime
     finished_at: datetime | None = None
@@ -120,6 +138,9 @@ class JobOut(BaseModel):
     external_id: str | None = None
     attempt: int
     cancel_requested: bool = False
+    method: str = "ga"  # requested method; result.method is the one actually used
+    fitness: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
     progress: dict[str, Any] = Field(default_factory=dict)
     error: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
@@ -139,6 +160,7 @@ def batch_out(doc: dict[str, Any]) -> BatchOut:
         total_jobs=doc["total_jobs"],
         params=doc["params"],
         fitness=doc["fitness"],
+        method=doc.get("method", "ga"),
         created_at=doc["created_at"],
         updated_at=doc["updated_at"],
         finished_at=doc.get("finished_at"),
@@ -159,6 +181,9 @@ def job_out(doc: dict[str, Any]) -> JobOut:
         external_id=doc.get("external_id"),
         attempt=doc.get("attempt", 1),
         cancel_requested=doc.get("cancel_requested", False),
+        method=doc.get("method", "ga"),
+        fitness=doc.get("fitness"),
+        params=doc.get("params") or {},
         progress=doc.get("progress") or {},
         error=doc.get("error"),
         result=doc.get("result"),

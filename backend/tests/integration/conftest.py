@@ -68,7 +68,15 @@ class Harness:
                     actor="test-worker",
                 )
             elif task == OPTIMIZE_DESIGN:
-                run_optimize(self.db, self.storage, args[0], args[1], actor="test-worker")
+                run_optimize(
+                    self.db,
+                    self.storage,
+                    args[0],
+                    args[1],
+                    actor="test-worker",
+                    auto_exhaustive_max=self.settings.exhaustive_auto_max,
+                    exhaustive_max=self.settings.exhaustive_max_combinations,
+                )
             elif task == VALIDATE_STRUCTURE:
                 run_validate(self.db, self.storage, args[0], self.settings.structure_limits())
             elif task == CONVERT_STRUCTURE:

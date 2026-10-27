@@ -10,6 +10,7 @@ from typing import Any
 from origami_core.fitness.base import FitnessError, FitnessFunction, FitnessKind, FitnessResult
 from origami_core.fitness.complementarity import StapleScaffoldComplementarity
 from origami_core.fitness.demo import SyntheticGCBalanceDemo
+from origami_core.models import Design
 
 # Name -> factory. Jobs reference fitness functions by name so workers can rebuild them; adding an objective
 # means implementing FitnessFunction and registering it here. The GA itself never changes.
@@ -24,6 +25,15 @@ def get_fitness(name: str) -> FitnessFunction:
     if name not in REGISTRY:
         raise FitnessError(f"Unknown fitness function {name!r}")
     return REGISTRY[name]()
+
+
+def incompatibility(fitness: FitnessFunction, design: Design) -> str | None:
+    """Why `fitness` refuses `design` (its own check_design message), or None if it can be used."""
+    try:
+        fitness.check_design(design)
+    except FitnessError as exc:
+        return str(exc)
+    return None
 
 
 def describe(fitness: FitnessFunction) -> dict[str, Any]:
@@ -48,4 +58,5 @@ __all__ = [
     "SyntheticGCBalanceDemo",
     "describe",
     "get_fitness",
+    "incompatibility",
 ]

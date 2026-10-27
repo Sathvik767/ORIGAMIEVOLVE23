@@ -20,7 +20,11 @@ def ready_dataset(h: Harness, csv: str = EXAMPLE) -> str:
 
 
 def create_batch(h: Harness, dataset_id: str, **headers: str) -> Any:
-    return h.client.post("/api/v1/batches", json={"dataset_id": dataset_id}, headers={**h.auth, **headers})
+    # Explicit GA: these tests exercise generations, progress and cancellation ("auto" would enumerate
+    # the small example designs instead).
+    return h.client.post(
+        "/api/v1/batches", json={"dataset_id": dataset_id, "method": "ga"}, headers={**h.auth, **headers}
+    )
 
 
 def jobs_of(h: Harness, batch_id: str) -> list[dict[str, Any]]:
@@ -80,15 +84,21 @@ def test_jobs_run_independently_and_store_results_outside_mongo(harness: Harness
     assert all("fitness_history" not in str(j) for j in harness.db.jobs.find())
 
 
-def test_one_failing_job_does_not_stop_the_batch(harness: Harness) -> None:
-    lines = EXAMPLE.splitlines()
-    mixed = (
-        "\n".join(
-            ln[: -len("synthetic")] + "lab" if ln.startswith("synthetic_00001,") else ln for ln in lines
-        )
+def mark_not_synthetic(csv: str, *design_ids: str) -> str:
+    lines = csv.splitlines()
+    return (
+        "\n".join(ln[: -len("synthetic")] + "lab" if ln.split(",")[0] in design_ids else ln for ln in lines)
         + "\n"
     )
-    batch = create_batch(harness, ready_dataset(harness, mixed)).json()
+
+
+def test_one_failing_job_does_not_stop_the_batch(harness: Harness) -> None:
+    ds_id = ready_dataset(harness)
+    harness.run_worker = False
+    batch = create_batch(harness, ds_id).json()
+    # The design changes after the batch was accepted, so the worker's own check_design() refuses it.
+    harness.db.designs.update_one({"external_id": "synthetic_00001"}, {"$set": {"metadata.source": "lab"}})
+    harness.run_pending()
     jobs = {j["external_id"]: j for j in jobs_of(harness, batch["id"])}
     failed = jobs.pop("synthetic_00001")
     assert failed["status"] == "failed"

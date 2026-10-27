@@ -122,6 +122,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/datasets/{dataset_id}/compatibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Design Compatibility
+         * @description Whether `fitness` can score each design (its check_design()), paged like GET /designs.
+         */
+        get: operations["design_compatibility_api_v1_datasets__dataset_id__compatibility_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/datasets/{dataset_id}/designs": {
         parameters: {
             query?: never;
@@ -538,22 +558,40 @@ export interface components {
     schemas: {
         /** BatchCreate */
         BatchCreate: {
+            /** Crossover Rate */
+            crossover_rate?: number | null;
             /** Dataset Id */
             dataset_id: string;
             /** Design Ids */
             design_ids?: string[] | null;
+            /** Elitism */
+            elitism?: number | null;
             /**
              * Fitness
              * @default synthetic_gc_balance_demo
              */
             fitness: string;
+            /** Generations */
+            generations?: number | null;
+            /**
+             * Method
+             * @default auto
+             * @enum {string}
+             */
+            method: "auto" | "ga" | "exhaustive";
+            /** Mutation Rate */
+            mutation_rate?: number | null;
             /** Name */
             name?: string | null;
+            /** Population Size */
+            population_size?: number | null;
             /**
              * Seed
              * @default 42
              */
             seed: number;
+            /** Tournament Size */
+            tournament_size?: number | null;
         };
         /** BatchOut */
         BatchOut: {
@@ -576,6 +614,11 @@ export interface components {
             };
             /** Id */
             id: string;
+            /**
+             * Method
+             * @default ga
+             */
+            method: string;
             /** Name */
             name: string | null;
             /** Params */
@@ -669,6 +712,17 @@ export interface components {
          * @enum {string}
          */
         DatasetStatus: "uploaded" | "ingesting" | "ready" | "ready_with_errors" | "failed";
+        /** DesignCompatibility */
+        DesignCompatibility: {
+            /** Compatible */
+            compatible: boolean;
+            /** Design Id */
+            design_id: string;
+            /** External Id */
+            external_id: string;
+            /** Reason */
+            reason?: string | null;
+        };
         /**
          * DesignFormat
          * @enum {string}
@@ -775,8 +829,19 @@ export interface components {
             external_id?: string | null;
             /** Finished At */
             finished_at?: string | null;
+            /** Fitness */
+            fitness?: string | null;
             /** Id */
             id: string;
+            /**
+             * Method
+             * @default ga
+             */
+            method: string;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
             /** Progress */
             progress?: {
                 [key: string]: unknown;
@@ -859,6 +924,14 @@ export interface components {
             };
             /** Fitness History */
             fitness_history: components["schemas"]["GenerationStats"][];
+            /**
+             * Method
+             * @default ga
+             * @enum {string}
+             */
+            method: "ga" | "exhaustive";
+            /** Note */
+            note?: string | null;
             /** Parameters */
             parameters: {
                 [key: string]: unknown;
@@ -887,6 +960,13 @@ export interface components {
         Page_DatasetOut_: {
             /** Items */
             items: components["schemas"]["DatasetOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** Page[DesignCompatibility] */
+        Page_DesignCompatibility_: {
+            /** Items */
+            items: components["schemas"]["DesignCompatibility"][];
             /** Next Cursor */
             next_cursor: string | null;
         };
@@ -1397,6 +1477,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    design_compatibility_api_v1_datasets__dataset_id__compatibility_get: {
+        parameters: {
+            query: {
+                fitness: string;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_DesignCompatibility_"];
+                };
             };
             /** @description Validation Error */
             422: {

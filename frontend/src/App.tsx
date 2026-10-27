@@ -10,6 +10,7 @@ import { DatasetDetail } from "./features/datasets/DatasetDetail";
 import { DatasetList } from "./features/datasets/DatasetList";
 import { UploadPanel } from "./features/datasets/UploadPanel";
 import { DesignDetail } from "./features/designs/DesignDetail";
+import { StructuresPage } from "./features/structures/StructuresPage";
 import { ViewerPage } from "./features/viewer/ViewerPage";
 
 function navClass({ isActive }: { isActive: boolean }) {
@@ -28,6 +29,9 @@ function Layout() {
             </NavLink>
             <NavLink to="/batches" className={navClass}>
               Batch Optimization
+            </NavLink>
+            <NavLink to="/structures" className={navClass}>
+              Structures
             </NavLink>
             <NavLink to="/viewer" className={navClass}>
               3D Viewer
@@ -77,6 +81,7 @@ export default function App() {
         <Route path="designs/:designId" element={<DesignDetail />} />
         <Route path="batches" element={<BatchesPage />} />
         <Route path="batches/:batchId" element={<BatchDetail />} />
+        <Route path="structures" element={<StructuresPage />} />
         <Route path="viewer" element={<ViewerPage />} />
         <Route path="status" element={<SystemStatus />} />
         <Route path="*" element={<p className="text-sm text-slate-500">Page not found.</p>} />

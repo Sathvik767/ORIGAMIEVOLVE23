@@ -127,3 +127,29 @@ def test_final_population_is_ranked_with_real_scores_from_supplied_sequences() -
     for c in cands:
         assert fit.evaluate(d, enc.decode(c.genome)).score == c.fitness  # re-scored independently
         assert all(sel.sequence in VARIANTS[sel.staple_id] for sel in c.selections)
+
+
+def test_exhaustive_optimize_returns_the_exact_optimum_in_the_ga_result_shape() -> None:
+    from origami_core.fitness import incompatibility
+    from origami_core.ga import exhaustive_optimize, exhaustive_search, search_space_size
+    from origami_worker.tasks.optimize import choose_method
+
+    d, fit = design(), SyntheticGCBalanceDemo()
+    result = exhaustive_optimize(d, fit)
+    baseline = exhaustive_search(d, fit)
+    assert result.method == "exhaustive" and result.fitness_history == [] and result.note
+    assert result.best_fitness == baseline.best_fitness and tuple(result.best_genome) == baseline.best_genome
+    assert result.best_fitness == optimize(d, fit, GAParameters(seed=42)).best_fitness
+    assert result.unique_evaluations == search_space_size(d) == 216
+    assert result.best_components["mean_gc_deviation"] == -result.best_fitness
+    ranks = result.final_candidates or []
+    assert [c.rank for c in ranks] == list(range(1, 11)) and ranks[0].genome == result.best_genome
+    assert [v.sequence for v in result.selected_variants] == [s.sequence for s in ranks[0].selections]
+    with pytest.raises(ValueError, match="exhaustive limit"):
+        exhaustive_optimize(d, fit, max_combinations=100)
+    with pytest.raises(FitnessError):
+        exhaustive_optimize(design(source="lab"), fit)
+    assert incompatibility(fit, design(source="lab")) and incompatibility(fit, d) is None
+
+    assert choose_method("auto", d, 216) == "exhaustive" and choose_method("auto", d, 215) == "ga"
+    assert choose_method("ga", d, 10**6) == "ga" and choose_method("exhaustive", d, 1) == "exhaustive"

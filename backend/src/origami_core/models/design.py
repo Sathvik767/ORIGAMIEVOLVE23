@@ -5,8 +5,9 @@ semantic checks (alphabet, coordinates, limits) live in origami_core.ingest.vali
 so that every problem is reported with a stable error code.
 """
 
+from collections.abc import Mapping
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -53,3 +54,8 @@ class Design(BaseModel):
     staples: tuple[Strand, ...] = ()
     metadata: dict[str, MetadataValue] = Field(default_factory=dict)
     measurements: tuple[Measurement, ...] = ()
+
+
+def design_from_doc(doc: Mapping[str, Any]) -> Design:
+    """Rebuild a Design from a stored document; storage-only fields (_id, dataset_id, ...) are ignored."""
+    return Design.model_validate({k: doc[k] for k in Design.model_fields if k in doc})

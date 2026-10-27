@@ -18,9 +18,10 @@ from origami_api.db import SCHEMA_VERSION
 from origami_api.routers.common import Cursor, Limit, next_cursor, now, parse_cursor, parse_oid
 from origami_api.schemas import BatchCreate, BatchOut, FitnessFunctionOut, JobOut, Page, batch_out, job_out
 from origami_api.security import CurrentPrincipal
-from origami_core.fitness import REGISTRY, describe, get_fitness
-from origami_core.ga import GAParameters, OptimizationResult
+from origami_core.fitness import REGISTRY, FitnessFunction, describe, get_fitness, incompatibility
+from origami_core.ga import GAParameters, OptimizationResult, search_space_size
 from origami_core.jobs import DatasetStatus, JobStatus, JobType, summarize_batch
+from origami_core.models import design_from_doc
 from origami_worker.task_names import OPTIMIZE_DESIGN
 
 log = logging.getLogger(__name__)
@@ -161,6 +162,58 @@ async def _resolve_designs(
     return designs
 
 
+GA_FIELDS = (
+    "population_size",
+    "generations",
+    "mutation_rate",
+    "crossover_rate",
+    "elitism",
+    "tournament_size",
+)
+MAX_LISTED = 20
+
+
+def _ga_params(body: BatchCreate, settings: Any) -> dict[str, Any]:
+    """GA settings for the batch: request overrides on top of the defaults, validated by GAParameters."""
+    overrides = {k: getattr(body, k) for k in GA_FIELDS if getattr(body, k) is not None}
+    if overrides.get("population_size", 0) > settings.ga_max_population:
+        raise HTTPException(422, f"population_size may be at most {settings.ga_max_population}")
+    if overrides.get("generations", 0) > settings.ga_max_generations:
+        raise HTTPException(422, f"generations may be at most {settings.ga_max_generations}")
+    try:
+        return asdict(GAParameters(seed=body.seed, **overrides))
+    except ValueError as exc:
+        raise HTTPException(422, f"Invalid GA settings: {exc}") from None
+
+
+async def _check_designs(
+    db: Any, designs: list[dict[str, Any]], fitness: FitnessFunction, method: str, max_exhaustive: int
+) -> None:
+    """Refuse the batch (422, nothing created) if the objective cannot score a design, or an explicit
+    exhaustive search would be too large. Same check_design() the worker would otherwise fail on."""
+    incompatible: list[str] = []
+    too_large: list[str] = []
+    async for doc in db.designs.find({"_id": {"$in": [d["_id"] for d in designs]}}):
+        design = design_from_doc(doc)
+        if (reason := incompatibility(fitness, design)) is not None:
+            incompatible.append(f"{design.external_id} ({reason})")
+        elif method == "exhaustive" and search_space_size(design) > max_exhaustive:
+            too_large.append(design.external_id)
+    if incompatible:
+        raise HTTPException(
+            422,
+            f"{len(incompatible)} design(s) cannot be scored by {fitness.name}: "
+            + "; ".join(sorted(incompatible)[:MAX_LISTED]),
+        )
+    if too_large:
+        raise HTTPException(
+            422,
+            f"Exhaustive search is limited to {max_exhaustive} combinations per design; too large: "
+            + ", ".join(sorted(too_large)[:MAX_LISTED])
+            + ". Use method 'ga' or 'auto'.",
+        )
+
+
 @router.post("", status_code=202, response_model=BatchOut, responses={200: {"model": BatchOut}})
 async def create_batch(
     request: Request,
@@ -187,9 +240,10 @@ async def create_batch(
     if body.fitness not in REGISTRY:
         raise HTTPException(422, f"Unknown fitness function {body.fitness!r}; see GET /fitness-functions")
     fitness = get_fitness(body.fitness)
+    params = _ga_params(body, settings)
     designs = await _resolve_designs(db, dataset["_id"], body.design_ids, settings.batch_max_designs)
+    await _check_designs(db, designs, fitness, body.method, settings.exhaustive_max_combinations)
 
-    params = asdict(GAParameters(seed=body.seed))
     at = now()
     batch: dict[str, Any] = {
         "_id": ObjectId(),
@@ -199,6 +253,7 @@ async def create_batch(
         "counts": {},
         "total_jobs": len(designs),
         "params": params,
+        "method": body.method,
         "fitness": {"name": fitness.name, "version": fitness.version, "kind": fitness.kind},
         "owner": principal.token_id,
         "created_at": at,
@@ -227,6 +282,7 @@ async def create_batch(
             "stale_requeues": 0,
             "cancel_requested": False,
             "params": params,
+            "method": body.method,
             "fitness": fitness.name,
             "progress": {},
             "error": None,
@@ -384,7 +440,10 @@ async def get_job_history(request: Request, _: CurrentPrincipal, job_id: str) ->
     storage = request.app.state.storage
     if job["status"] == JobStatus.COMPLETED.value and key and storage.exists(key):
         with storage.open_read(key) as fh:
-            out.update(source="result", history=json.loads(fh.read())["fitness_history"])
+            stored = json.loads(fh.read())
+        out.update(source="result", history=stored["fitness_history"], note=stored.get("note"))
+        if stored.get("method") == "exhaustive":
+            out["total_generations"] = None  # exhaustive search runs no generations
     elif job.get("live_history"):
         out.update(source="live", history=job["live_history"])
     else:

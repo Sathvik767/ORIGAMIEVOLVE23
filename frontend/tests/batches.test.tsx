@@ -56,7 +56,15 @@ const job = (id: string, over: Record<string, unknown>) => ({
   updated_at: "2026-10-10T10:00:05Z",
   ...over,
 });
-const page = (items: unknown[]) => json(200, { items, next_cursor: null });
+const page = (items: unknown[], next_cursor: string | null = null) => json(200, { items, next_cursor });
+/** GET /datasets/{id}/compatibility page: every design compatible unless a reason is given for it. */
+const compatibility = (list: { id: string; external_id: string }[], reasons: Record<string, string> = {}) =>
+  page(list.map((d) => ({ design_id: d.id, external_id: d.external_id, compatible: !reasons[d.id], reason: reasons[d.id] ?? null })));
+const GA_DEFAULT_BODY = { population_size: 50, generations: 100, mutation_rate: 0.05, crossover_rate: 0.8, elitism: 2, tournament_size: 3 };
+const OBJECTIVES = [
+  { name: "synthetic_gc_balance_demo", version: "1.0.0", kind: "computational_proxy", description: "Demo.", limitations: "Not a folding measure.", requires: "synthetic" },
+  { name: "staple_scaffold_complementarity", version: "1.0.0", kind: "computational_proxy", description: "Pairing.", limitations: "Base pairing only; not a measure of folding yield.", requires: "start/end" },
+];
 const designs = [
   { id: "d1", external_id: "tile_1", name: null, has_scaffold: true, scaffold_length: 64, staple_count: 8, candidate_count: 3, measurement_names: [] },
   { id: "d2", external_id: "tile_2", name: null, has_scaffold: true, scaffold_length: 64, staple_count: 8, candidate_count: 0, measurement_names: [] },
@@ -75,12 +83,9 @@ describe("batch optimization", () => {
     const spy = serve(async (method, path) => {
       if (method === "GET" && path === "/api/v1/datasets") return page([dataset]);
       if (method === "GET" && path === `/api/v1/datasets/${dataset.id}/designs`) return page(designs);
+      if (method === "GET" && path === `/api/v1/datasets/${dataset.id}/compatibility`) return compatibility(designs);
       if (method === "GET" && path === "/api/v1/batches") return page([]);
-      if (method === "GET" && path === "/api/v1/fitness-functions")
-        return json(200, [
-          { name: "synthetic_gc_balance_demo", version: "1.0.0", kind: "computational_proxy", description: "Demo.", limitations: "Not a folding measure.", requires: "synthetic" },
-          { name: "staple_scaffold_complementarity", version: "1.0.0", kind: "computational_proxy", description: "Pairing.", limitations: "Base pairing only; not a measure of folding yield.", requires: "start/end" },
-        ]);
+      if (method === "GET" && path === "/api/v1/fitness-functions") return json(200, OBJECTIVES);
       if (method === "POST" && path === "/api/v1/batches") {
         await new Promise<void>((r) => (release = r));
         return json(202, batch({ status: "queued", total_jobs: 1 }));
@@ -91,7 +96,8 @@ describe("batch optimization", () => {
 
     await screen.findByRole("option", { name: /Batch A/ });
     await userEvent.selectOptions(screen.getByLabelText("Validated dataset"), dataset.id);
-    await userEvent.click(await screen.findByLabelText(/Select all valid designs/));
+    await screen.findByText("3 variants"); // objective compatibility loaded
+    await userEvent.click(screen.getByLabelText(/Select all valid designs/));
     expect(screen.getByRole("checkbox", { name: /tile_2/ })).toBeDisabled(); // no variants
     expect(screen.getByText("2 selected")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: /tile_3/ }));
@@ -111,7 +117,15 @@ describe("batch optimization", () => {
     const posts = calls(spy, "POST", "/api/v1/batches");
     expect(posts).toHaveLength(1);
     const init = posts[0]![1]!;
-    expect(JSON.parse(String(init.body))).toEqual({ dataset_id: dataset.id, design_ids: ["d1"], seed: 7, name: "Nightly batch", fitness: "staple_scaffold_complementarity" });
+    expect(JSON.parse(String(init.body))).toEqual({
+      dataset_id: dataset.id,
+      design_ids: ["d1"],
+      seed: 7,
+      name: "Nightly batch",
+      fitness: "staple_scaffold_complementarity",
+      method: "auto",
+      ...GA_DEFAULT_BODY,
+    });
     const headers = init.headers as Record<string, string>;
     expect(headers["Idempotency-Key"]).toBeTruthy();
     expect(headers["Content-Type"]).toBe("application/json");

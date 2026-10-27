@@ -1,13 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import { api, type GenerationPoint, type JobStatus, type OptimizationResult, type RankedCandidate } from "../../api/client";
 import { ErrorMessage } from "../../components/ErrorMessage";
 import { StatusBadge } from "../../components/StatusBadge";
-import { formatFitness, POLL_INTERVAL_MS } from "./status";
-
-const DEMO_OBJECTIVE = "synthetic_gc_balance_demo";
+import { FitnessValue } from "./FitnessValue";
+import { DEMO_OBJECTIVE, demoDeviation, formatFitness, POLL_INTERVAL_MS } from "./status";
 
 function objectiveLabel(name: string): string {
   return name === DEMO_OBJECTIVE ? "Demo objective (synthetic data only, not a scientific measure)" : "Computational proxy";
@@ -23,7 +22,15 @@ function plateauLength(history: GenerationPoint[]): number {
 }
 
 /** Interactive line chart of recorded best and mean fitness per generation (dependency-free SVG). */
-function GenerationChart({ history, total }: { history: GenerationPoint[]; total: number | null }) {
+function GenerationChart({
+  history,
+  total,
+  fitness,
+}: {
+  history: GenerationPoint[];
+  total: number | null;
+  fitness: string | null | undefined;
+}) {
   const [hover, setHover] = useState<GenerationPoint | null>(null);
   if (history.length < 2) {
     return <p className="text-xs text-slate-500">The chart appears once at least two generations are recorded.</p>;
@@ -95,6 +102,12 @@ function GenerationChart({ history, total }: { history: GenerationPoint[]; total
         {hover && (
           <div role="tooltip" className="pointer-events-none absolute right-2 top-2 rounded border border-slate-200 bg-white/95 px-2 py-1 text-xs shadow">
             Generation {hover.generation} · best {formatFitness(hover.best)} · mean {formatFitness(hover.mean)}
+            {fitness === DEMO_OBJECTIVE && (
+              <div>
+                mean GC deviation: best {formatFitness(demoDeviation(fitness, hover.best))} · mean{" "}
+                {formatFitness(demoDeviation(fitness, hover.mean))} (lower is better)
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -173,6 +186,9 @@ function Ranking({ result }: { result: OptimizationResult }) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-600">
+        {result.method === "exhaustive"
+          ? "Top candidates among all scored combinations. "
+          : "Distinct candidates in the final GA population. "}
         Rank 1 has the highest score under <span className="font-mono">{result.fitness_function.name}</span>
         {runnerUp ? (
           <>
@@ -193,7 +209,7 @@ function Ranking({ result }: { result: OptimizationResult }) {
               <th className="py-2 pr-3">Rank</th>
               <th className="py-2 pr-3">Candidate (genome)</th>
               <th className="py-2 pr-3 text-right">Fitness</th>
-              <th className="py-2 pr-3 text-right">Copies</th>
+              {result.method !== "exhaustive" && <th className="py-2 pr-3 text-right">Copies</th>}
               <th className="py-2 pr-3 text-right">Variants used</th>
               <th className="py-2">Details</th>
             </tr>
@@ -221,8 +237,12 @@ function Ranking({ result }: { result: OptimizationResult }) {
                     </table>
                   )}
                 </td>
-                <td className="py-2 pr-3 text-right tabular-nums">{formatFitness(c.fitness)}</td>
-                <td className="py-2 pr-3 text-right tabular-nums">{c.occurrences}</td>
+                <td className="py-2 pr-3 text-right tabular-nums">
+                  <FitnessValue fitness={result.fitness_function.name} score={c.fitness} components={c.components} />
+                </td>
+                {result.method !== "exhaustive" && (
+                  <td className="py-2 pr-3 text-right tabular-nums">{c.occurrences}</td>
+                )}
                 <td className="py-2 pr-3 text-right tabular-nums">{c.selections.filter((s) => !s.is_original).length}</td>
                 <td className="py-2">
                   <div className="flex flex-wrap gap-2 text-xs">
@@ -254,7 +274,7 @@ function Ranking({ result }: { result: OptimizationResult }) {
   );
 }
 
-function Card({ label, value }: { label: string; value: string }) {
+function Card({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
       <dt className="text-xs text-slate-500">{label}</dt>
@@ -267,11 +287,14 @@ export function JobResult({
   jobId,
   onClose,
   status,
+  fitness,
   scrollIntoView = false,
 }: {
   jobId: string;
   onClose: () => void;
   status?: JobStatus;
+  /** Objective name from the job, so scores can be labelled before the full result is loaded. */
+  fitness?: string | null;
   scrollIntoView?: boolean;
 }) {
   const active = status === "running" || status === "queued";
@@ -298,6 +321,11 @@ export function JobResult({
   const total = history.data?.total_generations ?? null;
   const plateau = plateauLength(h);
   const data = result.data;
+  const objectiveName = data?.fitness_function.name ?? fitness;
+  const exhaustive = data?.method === "exhaustive";
+  const score = (value: number | undefined, components?: Record<string, unknown> | null) => (
+    <FitnessValue fitness={objectiveName} score={value} components={components} />
+  );
 
   return (
     <section ref={panel} aria-labelledby="result-heading" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -332,17 +360,30 @@ export function JobResult({
             </p>
           )}
 
-          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-            <Card label="Generation" value={last ? `${last.generation} / ${total ?? "—"}` : "—"} />
-            <Card label="Initial best" value={formatFitness(first?.best)} />
-            <Card label={completed ? "Final best" : "Current best"} value={formatFitness(last?.best)} />
-            <Card label={completed ? "Final mean" : "Current mean"} value={formatFitness(last?.mean)} />
-            <Card label="Improvement" value={first && last ? formatFitness(last.best - first.best) : "—"} />
-            <Card label="Best unchanged for" value={h.length ? `${plateau} gen.` : "—"} />
-            <Card label="Distinct designs scored" value={data?.unique_evaluations ? String(data.unique_evaluations) : "—"} />
-          </dl>
+          {exhaustive && data ? (
+            <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <Card label="Method" value="Exhaustive search" />
+              <Card label="Best" value={score(data.best_fitness, data.best_components)} />
+              <Card label="Combinations scored" value={String(data.unique_evaluations)} />
+            </dl>
+          ) : (
+            <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+              <Card label="Method" value={data ? "Genetic algorithm" : "—"} />
+              <Card label="Generation" value={last ? `${last.generation} / ${total ?? "—"}` : "—"} />
+              <Card label="Initial best" value={score(first?.best)} />
+              <Card
+                label={completed ? "Final best" : "Current best"}
+                value={score(last?.best, completed && data?.best_fitness === last?.best ? data?.best_components : null)}
+              />
+              <Card label={completed ? "Final mean" : "Current mean"} value={score(last?.mean)} />
+              <Card label="Improvement" value={first && last ? formatFitness(last.best - first.best) : "—"} />
+              <Card label="Best unchanged for" value={h.length ? `${plateau} gen.` : "—"} />
+              <Card label="Distinct designs scored" value={data?.unique_evaluations ? String(data.unique_evaluations) : "—"} />
+            </dl>
+          )}
           <p className="text-xs text-slate-500">
-            {history.data.source === "result" && "Recorded GA values from the stored result."}
+            {exhaustive && (data?.note ?? "Exhaustive search: no GA generations were run, so there is no generation chart.")}
+            {!exhaustive && history.data.source === "result" && "Recorded GA values from the stored result."}
             {history.data.source === "live" && `Recorded so far by the worker (${history.data.status}).`}
             {history.data.source === "unavailable" &&
               `${history.data.note ?? ""} No graph can be shown for it; run a new optimization to record generation history.`}
@@ -355,7 +396,7 @@ export function JobResult({
           {h.length > 0 && (
             <div>
               <h3 className="mb-1 text-sm font-semibold text-slate-700">Fitness by generation</h3>
-              <GenerationChart history={h} total={total} />
+              <GenerationChart history={h} total={total} fitness={objectiveName} />
               <details className="mt-2 text-xs">
                 <summary className="cursor-pointer text-slate-600">Show values</summary>
                 <div className="max-h-56 overflow-auto">
@@ -385,7 +426,9 @@ export function JobResult({
           {data && (
             <div className="grid gap-5 lg:grid-cols-[2fr_1fr]">
               <div>
-                <h3 className="mb-1 text-sm font-semibold text-slate-700">Final population ranking</h3>
+                <h3 className="mb-1 text-sm font-semibold text-slate-700">
+                  {exhaustive ? "Candidate ranking (all combinations)" : "Final population ranking"}
+                </h3>
                 <Ranking result={data} />
               </div>
               <div>
@@ -393,7 +436,9 @@ export function JobResult({
                 {data.final_population_fitness?.length ? (
                   <Distribution values={data.final_population_fitness} />
                 ) : (
-                  <p className="text-xs text-slate-500">Not recorded for this (older) result.</p>
+                  <p className="text-xs text-slate-500">
+                    {exhaustive ? "Not applicable: exhaustive search has no population." : "Not recorded for this (older) result."}
+                  </p>
                 )}
               </div>
             </div>

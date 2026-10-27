@@ -12,9 +12,18 @@ from pymongo import ReturnDocument
 
 from origami_api.config import get_settings
 from origami_core.fitness import FitnessError, get_fitness
-from origami_core.ga import EncodingError, GAParameters, GenerationStats, optimize
+from origami_core.ga import (
+    AUTO_EXHAUSTIVE_MAX,
+    EncodingError,
+    GAParameters,
+    GenerationStats,
+    OptimizationMethod,
+    exhaustive_optimize,
+    optimize,
+    search_space_size,
+)
 from origami_core.jobs import DatasetStatus, JobStatus, JobType
-from origami_core.models import Design
+from origami_core.models import Design, design_from_doc
 from origami_core.storage import StorageBackend
 from origami_worker.celery_app import celery_app
 from origami_worker.db import get_db, get_storage
@@ -22,7 +31,13 @@ from origami_worker.job_state import now, refresh_batch, transition
 from origami_worker.task_names import OPTIMIZE_DESIGN, REAP_STALE_JOBS
 
 log = logging.getLogger(__name__)
-DESIGN_FIELDS = tuple(Design.model_fields)
+
+
+def choose_method(requested: str, design: Design, auto_max: int) -> OptimizationMethod:
+    """Resolve "auto": exhaustive search when the design has at most `auto_max` combinations, else the GA."""
+    if requested == "exhaustive" or (requested == "auto" and search_space_size(design) <= auto_max):
+        return "exhaustive"
+    return "ga"
 
 
 def result_key(job_id: ObjectId, attempt: int) -> str:
@@ -30,7 +45,15 @@ def result_key(job_id: ObjectId, attempt: int) -> str:
 
 
 def run_optimize(
-    db: Any, storage: StorageBackend, job_id: str, attempt: int, *, actor: str, progress_every: int = 5
+    db: Any,
+    storage: StorageBackend,
+    job_id: str,
+    attempt: int,
+    *,
+    actor: str,
+    progress_every: int = 5,
+    auto_exhaustive_max: int = AUTO_EXHAUSTIVE_MAX,
+    exhaustive_max: int = 2**20,
 ) -> None:
     """Claim and run one job. A message for an older attempt, or a duplicate delivery, claims nothing."""
     oid = ObjectId(job_id)
@@ -46,11 +69,26 @@ def run_optimize(
     if job is None:
         log.info("optimize job %s attempt %s not claimable", job_id, attempt)
         return
-    execute_claimed(db, storage, job, actor=actor, progress_every=progress_every)
+    execute_claimed(
+        db,
+        storage,
+        job,
+        actor=actor,
+        progress_every=progress_every,
+        auto_exhaustive_max=auto_exhaustive_max,
+        exhaustive_max=exhaustive_max,
+    )
 
 
 def execute_claimed(
-    db: Any, storage: StorageBackend, job: dict[str, Any], *, actor: str, progress_every: int = 5
+    db: Any,
+    storage: StorageBackend,
+    job: dict[str, Any],
+    *,
+    actor: str,
+    progress_every: int = 5,
+    auto_exhaustive_max: int = AUTO_EXHAUSTIVE_MAX,
+    exhaustive_max: int = 2**20,
 ) -> None:
     oid, attempt = job["_id"], job["attempt"]
     mine = {"attempt": attempt}  # every write is fenced to this attempt
@@ -88,8 +126,13 @@ def execute_claimed(
         doc = db.designs.find_one({"_id": job["design_id"]})
         if doc is None:
             raise EncodingError("Design no longer exists")
-        design = Design.model_validate({k: doc[k] for k in DESIGN_FIELDS if k in doc})
-        result = optimize(design, get_fitness(job["fitness"]), GAParameters(**job["params"]), on_progress)
+        design = design_from_doc(doc)
+        fitness = get_fitness(job["fitness"])
+        # Jobs created before methods existed have no "method" and always ran the GA.
+        if choose_method(job.get("method", "ga"), design, auto_exhaustive_max) == "exhaustive":
+            result = exhaustive_optimize(design, fitness, exhaustive_max)
+        else:
+            result = optimize(design, fitness, GAParameters(**job["params"]), on_progress)
     except (EncodingError, FitnessError, ValueError) as exc:
         error = {"code": type(exc).__name__, "message": str(exc), "retryable": False}
     except Exception as exc:
@@ -137,6 +180,8 @@ def execute_claimed(
                 "result": {
                     "result_key": key,
                     "best_fitness": result.best_fitness,
+                    "best_components": result.best_components,
+                    "method": result.method,
                     "num_genes": result.parameters["num_genes"],
                     "fitness_kind": result.fitness_function["kind"],
                 },
@@ -226,6 +271,8 @@ def optimize_design(job_id: str, attempt: int) -> None:
         attempt,
         actor=_actor(),
         progress_every=settings.progress_interval_generations,
+        auto_exhaustive_max=settings.exhaustive_auto_max,
+        exhaustive_max=settings.exhaustive_max_combinations,
     )
 
 
