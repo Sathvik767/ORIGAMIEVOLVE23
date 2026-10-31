@@ -1,6 +1,7 @@
 import type { components } from "./schema";
 
 export const API_BASE = "/api/v1";
+const REQUEST_TIMEOUT_MS = 15000;
 
 type Schemas = components["schemas"];
 export type DatasetOut = Schemas["DatasetOut"];
@@ -23,6 +24,8 @@ export type OptimizationResult = Schemas["OptimizationResult"];
 export type StructureOut = Schemas["StructureOut"];
 export type FitnessFunctionOut = Schemas["FitnessFunctionOut"];
 export type RankedCandidate = Schemas["RankedCandidate"];
+export type DesignCompatibility = Schemas["DesignCompatibility"];
+export type CompatibilityPage = Schemas["Page_DesignCompatibility_"];
 
 export interface GenerationPoint {
   generation: number;
@@ -137,20 +140,38 @@ async function request<T>(
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined) params.set(k, v);
   const qs = params.size ? `?${params}` : "";
-  const res = await fetch(`${API_BASE}${path}${qs}`, {
-    method,
-    headers: {
-      Accept: "application/json",
-      ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...headers,
-      ...authHeaders(),
-    },
-    body: json !== undefined ? JSON.stringify(json) : undefined,
-  });
-  if (res.ok || acceptStatuses.includes(res.status)) {
-    return (res.status === 204 ? undefined : await res.json()) as T;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${API_BASE}${path}${qs}`, {
+      method,
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...headers,
+        ...authHeaders(),
+      },
+      body: json !== undefined ? JSON.stringify(json) : undefined,
+    });
+    if (res.ok || acceptStatuses.includes(res.status)) {
+      return (res.status === 204 ? undefined : await res.json()) as T;
+    }
+    throw await toApiError(res);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError(0, {
+        type: "timeout",
+        title: "Request timed out",
+        status: 0,
+        detail: "The API request timed out. Check that the backend is running and try again.",
+      });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  throw await toApiError(res);
 }
 
 export interface ReadinessResponse {
@@ -189,6 +210,13 @@ export const api = {
   retryJob: (id: string) => request<JobOut>("POST", `/jobs/${encodeURIComponent(id)}/retry`),
   getJobHistory: (id: string) => request<JobHistory>("GET", `/jobs/${encodeURIComponent(id)}/history`),
   getStructureTools: () => request<{ oxdna: ToolStatus; tacoxdna: ToolStatus }>("GET", "/structures/tools"),
+  convertStructure: (id: string, lattice: "square" | "honeycomb") =>
+    request<StructureOut>("POST", `/structures/${encodeURIComponent(id)}/convert`, { query: { lattice } }),
+  /** Same paging (limit 50, cursor) as listDesigns, so page N of both covers the same designs. */
+  designCompatibility: (id: string, fitness: string, cursor?: string) =>
+    request<CompatibilityPage>("GET", `/datasets/${encodeURIComponent(id)}/compatibility`, {
+      query: { fitness, cursor, limit: "50" },
+    }),
   getJobResult: (id: string) => request<OptimizationResult>("GET", `/jobs/${encodeURIComponent(id)}/result`),
 };
 
@@ -210,21 +238,26 @@ export interface UploadParams {
   description?: string;
 }
 
+export interface Upload<T> {
+  promise: Promise<T>;
+  abort: () => void;
+}
+
 /**
- * Upload a file as the raw request body (the backend streams it with a size limit).
+ * Send a file as the raw request body (the backend streams it with a size limit; no multipart).
  * Uses XMLHttpRequest because fetch() cannot report upload progress.
  */
-export function uploadDataset(
+function uploadRaw<T>(
+  method: "POST" | "PUT",
+  path: string,
+  query: URLSearchParams,
   file: File,
-  params: UploadParams,
   onProgress?: (fraction: number) => void,
-): { promise: Promise<UploadResult>; abort: () => void } {
+): Upload<T> {
   const xhr = new XMLHttpRequest();
-  const query = new URLSearchParams({ name: params.name, format: params.format, filename: file.name });
-  if (params.description) query.set("description", params.description);
-
-  const promise = new Promise<UploadResult>((resolve, reject) => {
-    xhr.open("POST", `${API_BASE}/datasets?${query}`);
+  const qs = query.size ? `?${query}` : "";
+  const promise = new Promise<T>((resolve, reject) => {
+    xhr.open(method, `${API_BASE}${path}${qs}`);
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.setRequestHeader("Accept", "application/json");
     for (const [k, v] of Object.entries(authHeaders())) xhr.setRequestHeader(k, v);
@@ -238,7 +271,7 @@ export function uploadDataset(
       } catch {
         body = undefined;
       }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body as UploadResult);
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as T);
       else reject(new ApiError(xhr.status, body as Problem | undefined));
     };
     xhr.onerror = () => reject(new ApiError(0, { type: "about:blank", title: "Network error", status: 0 }));
@@ -246,6 +279,38 @@ export function uploadDataset(
     xhr.send(file);
   });
   return { promise, abort: () => xhr.abort() };
+}
+
+export function uploadDataset(
+  file: File,
+  params: UploadParams,
+  onProgress?: (fraction: number) => void,
+): Upload<UploadResult> {
+  const query = new URLSearchParams({ name: params.name, format: params.format, filename: file.name });
+  if (params.description) query.set("description", params.description);
+  return uploadRaw<UploadResult>("POST", "/datasets", query, file, onProgress);
+}
+
+export type StructureFormat = "oxdna" | "cadnano";
+
+/** caDNAno JSON, or the oxDNA topology (then send the configuration with uploadStructureConfiguration). */
+export function uploadStructure(
+  file: File,
+  params: { name: string; format: StructureFormat; designId?: string },
+  onProgress?: (fraction: number) => void,
+): Upload<StructureOut> {
+  const query = new URLSearchParams({ name: params.name, format: params.format });
+  if (params.designId) query.set("design_id", params.designId);
+  return uploadRaw<StructureOut>("POST", "/structures", query, file, onProgress);
+}
+
+export function uploadStructureConfiguration(
+  structureId: string,
+  file: File,
+  onProgress?: (fraction: number) => void,
+): Upload<StructureOut> {
+  const path = `/structures/${encodeURIComponent(structureId)}/configuration`;
+  return uploadRaw<StructureOut>("PUT", path, new URLSearchParams(), file, onProgress);
 }
 
 export function inferFormat(filename: string): DesignFormat | undefined {

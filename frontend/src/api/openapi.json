@@ -4,6 +4,17 @@
       "BatchCreate": {
         "additionalProperties": false,
         "properties": {
+          "crossover_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crossover Rate"
+          },
           "dataset_id": {
             "maxLength": 24,
             "minLength": 1,
@@ -26,11 +37,54 @@
             ],
             "title": "Design Ids"
           },
+          "elitism": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elitism"
+          },
           "fitness": {
             "default": "synthetic_gc_balance_demo",
             "maxLength": 100,
             "title": "Fitness",
             "type": "string"
+          },
+          "generations": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generations"
+          },
+          "method": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "ga",
+              "exhaustive"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "mutation_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mutation Rate"
           },
           "name": {
             "anyOf": [
@@ -44,12 +98,34 @@
             ],
             "title": "Name"
           },
+          "population_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Population Size"
+          },
           "seed": {
             "default": 42,
             "maximum": 4294967295.0,
             "minimum": 0.0,
             "title": "Seed",
             "type": "integer"
+          },
+          "tournament_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tournament Size"
           }
         },
         "required": [
@@ -97,6 +173,11 @@
           },
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "method": {
+            "default": "ga",
+            "title": "Method",
             "type": "string"
           },
           "name": {
@@ -310,6 +391,40 @@
         ],
         "title": "DatasetStatus",
         "type": "string"
+      },
+      "DesignCompatibility": {
+        "properties": {
+          "compatible": {
+            "title": "Compatible",
+            "type": "boolean"
+          },
+          "design_id": {
+            "title": "Design Id",
+            "type": "string"
+          },
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "design_id",
+          "external_id",
+          "compatible"
+        ],
+        "title": "DesignCompatibility",
+        "type": "object"
       },
       "DesignFormat": {
         "enum": [
@@ -653,9 +768,30 @@
             ],
             "title": "Finished At"
           },
+          "fitness": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fitness"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "method": {
+            "default": "ga",
+            "title": "Method",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
           },
           "progress": {
             "additionalProperties": true,
@@ -870,6 +1006,26 @@
             "title": "Fitness History",
             "type": "array"
           },
+          "method": {
+            "default": "ga",
+            "enum": [
+              "ga",
+              "exhaustive"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
           "parameters": {
             "additionalProperties": true,
             "title": "Parameters",
@@ -960,6 +1116,34 @@
           "next_cursor"
         ],
         "title": "Page[DatasetOut]",
+        "type": "object"
+      },
+      "Page_DesignCompatibility_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DesignCompatibility"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "Page[DesignCompatibility]",
         "type": "object"
       },
       "Page_DesignSummary_": {
@@ -2164,6 +2348,104 @@
           }
         },
         "summary": "Get Dataset",
+        "tags": [
+          "datasets"
+        ]
+      }
+    },
+    "/api/v1/datasets/{dataset_id}/compatibility": {
+      "get": {
+        "description": "Whether `fitness` can score each design (its check_design()), paged like GET /designs.",
+        "operationId": "design_compatibility_api_v1_datasets__dataset_id__compatibility_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "dataset_id",
+            "required": true,
+            "schema": {
+              "title": "Dataset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fitness",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "title": "Fitness",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 24,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DesignCompatibility_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Design Compatibility",
         "tags": [
           "datasets"
         ]

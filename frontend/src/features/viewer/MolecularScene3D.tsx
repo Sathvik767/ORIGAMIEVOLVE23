@@ -80,8 +80,8 @@ function Backbone({ geometry }: { geometry: MolecularGeometry }) {
 }
 
 /** Renders oxDNA coordinates as stored. Remount (key) per structure so all GPU resources are released. */
-export const MolecularScene3D = forwardRef<SceneHandle, { geometry: MolecularGeometry }>(function MolecularScene3D(
-  { geometry },
+export const MolecularScene3D = forwardRef<SceneHandle, { geometry: MolecularGeometry; background?: string }>(function MolecularScene3D(
+  { geometry, background = "#f8fafc" },
   ref,
 ) {
   const radius = useMemo(() => {
@@ -93,7 +93,7 @@ export const MolecularScene3D = forwardRef<SceneHandle, { geometry: MolecularGeo
   const distance = Math.max(radius * 2.6, 10);
   return (
     <Canvas frameloop="demand" dpr={[1, 2]} camera={{ fov: 50, near: 0.1, far: distance * 20 }} aria-label="3D molecular structure">
-      <color attach="background" args={["#f8fafc"]} />
+      <color attach="background" args={[background]} />
       <ambientLight intensity={0.7} />
       <directionalLight position={[5, 8, 10]} intensity={1.2} />
       <Nucleotides geometry={geometry} />

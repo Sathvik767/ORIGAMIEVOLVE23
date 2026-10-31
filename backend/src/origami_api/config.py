@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     job_max_stale_requeues: int = Field(default=2, ge=0)  # automatic requeues of a lost job before failing it
     reaper_interval_s: int = Field(default=60, gt=0)
     progress_interval_generations: int = Field(default=5, gt=0)
+    # Upper limits for user-supplied GA settings (POST /batches); defaults stay in GAParameters.
+    ga_max_population: int = Field(default=500, ge=2)
+    ga_max_generations: int = Field(default=1000, ge=1)
+    # method "auto" enumerates designs with at most this many combinations instead of running the GA.
+    exhaustive_auto_max: int = Field(default=4096, ge=1)
+    exhaustive_max_combinations: int = Field(default=1_048_576, ge=1)  # hard cap for method "exhaustive"
 
     # Structures (M7): oxDNA / caDNAno import
     max_structure_bytes: int = Field(default=100 * MiB, gt=0)

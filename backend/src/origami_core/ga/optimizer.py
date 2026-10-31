@@ -1,5 +1,6 @@
 """PyGAD-backed optimizer for a single design (no persistence, queueing or batching in M2)."""
 
+import itertools
 import math
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -16,7 +17,7 @@ from origami_core.models import Design
 
 @dataclass(frozen=True)
 class GAParameters:
-    """Fixed M2 defaults (docs/PLAN.md section 10). Only `seed` is meant to be user-configurable."""
+    """M2 defaults (docs/PLAN.md section 10). Batches may override them within server-side limits."""
 
     population_size: int = 50
     generations: int = 100
@@ -77,14 +78,20 @@ class RankedCandidate(BaseModel):
 
 
 TOP_CANDIDATES = 10
+# Method "auto" enumerates every combination when a design has at most this many (exact optimum, fast).
+AUTO_EXHAUSTIVE_MAX = 4096
+
+OptimizationMethod = Literal["ga", "exhaustive"]
 
 
 class OptimizationResult(BaseModel):
     design_id: str
+    method: OptimizationMethod = "ga"  # results stored before this field existed are GA runs
+    note: str | None = None
     best_genome: list[int]
     best_fitness: float
     best_components: dict[str, float]
-    fitness_history: list[GenerationStats]  # generation 0 = initial population
+    fitness_history: list[GenerationStats]  # generation 0 = initial population; empty for exhaustive
     stopped_early: bool = False  # on_progress asked to stop (e.g. cancellation)
     evaluations: int = 0  # fitness requests made by the GA (incl. repeats of the same genome)
     unique_evaluations: int = 0  # distinct genomes actually scored (repeats are cached)
@@ -94,6 +101,87 @@ class OptimizationResult(BaseModel):
     selected_variants: list[SelectedVariant]
     parameters: dict[str, Any]
     fitness_function: dict[str, str]
+
+
+def _fitness_info(fitness: FitnessFunction) -> dict[str, str]:
+    return {
+        "name": fitness.name,
+        "version": fitness.version,
+        "kind": fitness.kind,
+        "description": fitness.description,
+        "limitations": fitness.limitations,
+    }
+
+
+def _selections(
+    design: Design, encoding: CandidateEncoding, genome: tuple[int, ...]
+) -> list[CandidateSelection]:
+    return [
+        CandidateSelection(
+            staple_id=design.staples[idx].id,
+            choice=genome[k],
+            is_original=genome[k] == 0,
+            sequence=encoding.options(k)[genome[k]],
+        )
+        for k, idx in enumerate(encoding.slots)
+    ]
+
+
+def _selected_variants(
+    design: Design, encoding: CandidateEncoding, genome: tuple[int, ...]
+) -> list[SelectedVariant]:
+    return [SelectedVariant(**s.model_dump()) for s in _selections(design, encoding, genome)]
+
+
+def exhaustive_optimize(
+    design: Design, fitness: FitnessFunction, max_combinations: int = 2**20
+) -> OptimizationResult:
+    """Score every combination of supplied options: the exact optimum under `fitness`, in the GA's result
+    shape. No generations are run, so `fitness_history` is empty; ties resolve as in the GA."""
+    fitness.check_design(design)
+    encoding = CandidateEncoding.from_design(design)
+    size = math.prod(len(g) for g in encoding.gene_space)
+    if size > max_combinations:
+        raise ValueError(f"Search space has {size} combinations; exhaustive limit is {max_combinations}")
+    scores: dict[tuple[int, ...], FitnessResult] = {}
+    for genome in itertools.product(*encoding.gene_space):
+        result = fitness.evaluate(design, encoding.decode(genome))
+        if not math.isfinite(result.score):
+            raise FitnessError(f"{fitness.name} returned a non-finite score: {result.score}")
+        scores[genome] = result
+    ranked = sorted(scores, key=lambda g: (-scores[g].score, g))
+    best = ranked[0]
+    return OptimizationResult(
+        design_id=design.external_id,
+        method="exhaustive",
+        note=f"Exhaustive search scored all {size} combinations; no GA generations were run.",
+        best_genome=list(best),
+        best_fitness=scores[best].score,
+        best_components=scores[best].components,
+        fitness_history=[],
+        evaluations=size,
+        unique_evaluations=size,
+        final_population_fitness=None,  # there is no population
+        final_candidates=[
+            RankedCandidate(
+                rank=i + 1,
+                genome=list(g),
+                fitness=scores[g].score,
+                components=scores[g].components,
+                occurrences=1,
+                selections=_selections(design, encoding, g),
+            )
+            for i, g in enumerate(ranked[:TOP_CANDIDATES])
+        ],
+        selected_variants=_selected_variants(design, encoding, best),
+        parameters={
+            "method": "exhaustive",
+            "search_space_size": size,
+            "num_genes": encoding.num_genes,
+            "engine": "exhaustive enumeration",
+        },
+        fitness_function=_fitness_info(fitness),
+    )
 
 
 def optimize(
@@ -180,17 +268,6 @@ def optimize(
         counts[g] = counts.get(g, 0) + 1
     ranked = sorted(counts, key=lambda g: (-score(g).score, g))[:TOP_CANDIDATES]
 
-    def selections(genome: tuple[int, ...]) -> list[CandidateSelection]:
-        return [
-            CandidateSelection(
-                staple_id=design.staples[idx].id,
-                choice=genome[k],
-                is_original=genome[k] == 0,
-                sequence=encoding.options(k)[genome[k]],
-            )
-            for k, idx in enumerate(encoding.slots)
-        ]
-
     candidates = [
         RankedCandidate(
             rank=i + 1,
@@ -198,13 +275,14 @@ def optimize(
             fitness=score(g).score,
             components=score(g).components,
             occurrences=counts[g],
-            selections=selections(g),
+            selections=_selections(design, encoding, g),
         )
         for i, g in enumerate(ranked)
     ]
 
     return OptimizationResult(
         design_id=design.external_id,
+        method="ga",
         best_genome=list(best_genome),
         best_fitness=best.score,
         best_components=best.components,
@@ -229,13 +307,8 @@ def optimize(
             "crossover_type": "single_point" if encoding.num_genes > 1 else "none (single gene)",
             "mutation_type": "random (replacement from supplied options)",
             "num_genes": encoding.num_genes,
+            "method": "ga",
             "engine": f"pygad {pygad.__version__}",
         },
-        fitness_function={
-            "name": fitness.name,
-            "version": fitness.version,
-            "kind": fitness.kind,
-            "description": fitness.description,
-            "limitations": fitness.limitations,
-        },
+        fitness_function=_fitness_info(fitness),
     )

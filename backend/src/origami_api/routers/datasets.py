@@ -14,6 +14,7 @@ from origami_api.db import SCHEMA_VERSION
 from origami_api.routers.common import Cursor, Limit, next_cursor, now, parse_cursor, parse_oid
 from origami_api.schemas import (
     DatasetOut,
+    DesignCompatibility,
     DesignSummary,
     Page,
     ReportSummary,
@@ -23,9 +24,10 @@ from origami_api.schemas import (
 )
 from origami_api.security import CurrentPrincipal
 from origami_api.services.uploads import UploadTooLarge, stream_to_storage
+from origami_core.fitness import REGISTRY, get_fitness, incompatibility
 from origami_core.ingest import sniff
 from origami_core.jobs import ACTIVE, DatasetStatus, JobStatus, JobType
-from origami_core.models import DesignFormat
+from origami_core.models import DesignFormat, design_from_doc
 from origami_worker.task_names import INGEST_DATASET
 
 log = logging.getLogger(__name__)
@@ -300,3 +302,36 @@ async def list_designs(
     projection = {"staples": 0, "metadata": 0}
     docs = await db.designs.find(query, projection).sort("_id", 1).limit(limit).to_list(length=limit)
     return Page(items=[design_summary(d) for d in docs], next_cursor=next_cursor(docs, limit))
+
+
+@router.get("/{dataset_id}/compatibility", response_model=Page[DesignCompatibility])
+async def design_compatibility(
+    request: Request,
+    _: CurrentPrincipal,
+    dataset_id: str,
+    fitness: Annotated[str, Query(max_length=100)],
+    limit: Limit = 50,
+    cursor: Cursor = None,
+) -> Page[DesignCompatibility]:
+    """Whether `fitness` can score each design (its check_design()), paged like GET /designs."""
+    if fitness not in REGISTRY:
+        raise HTTPException(422, f"Unknown fitness function {fitness!r}; see GET /fitness-functions")
+    objective = get_fitness(fitness)
+    db = request.app.state.db
+    doc = await _get_dataset(db, dataset_id)
+    query: dict[str, Any] = {"dataset_id": doc["_id"]}
+    if (after := parse_cursor(cursor)) is not None:
+        query["_id"] = {"$gt": after}
+    docs = await db.designs.find(query).sort("_id", 1).limit(limit).to_list(length=limit)
+    items = []
+    for d in docs:
+        reason = incompatibility(objective, design_from_doc(d))
+        items.append(
+            DesignCompatibility(
+                design_id=str(d["_id"]),
+                external_id=d["external_id"],
+                compatible=reason is None,
+                reason=reason,
+            )
+        )
+    return Page(items=items, next_cursor=next_cursor(docs, limit))

@@ -30,6 +30,7 @@ Research prototype for managing DNA origami datasets and running genetic-algorit
 | M5: Integration and deployment readiness | ✅ end-to-end test, security fixes, benchmark, worker healthchecks, this README |
 | M8: Objective evaluation | ✅ pluggable objectives, staple–scaffold complementarity metric, GA vs random vs exhaustive evaluation |
 | M7: Real structure support | ✅ oxDNA import with coordinates, caDNAno topology validation, optional tacoxDNA conversion, molecular viewer mode |
+| Batch usability | ✅ objective compatibility checked at batch creation, exhaustive search for small spaces, configurable GA settings, Structures page |
 
 Plan, data model, job lifecycle and every deviation: [docs/PLAN.md](docs/PLAN.md) (§10 lists changes per milestone).
 
@@ -116,16 +117,32 @@ The frontend keeps the token in `sessionStorage` (cleared when the tab closes). 
 | Page | What it does |
 |---|---|
 | **Datasets** | Upload CSV / NDJSON / JSON ([formats](docs/input-formats.md)); see the validation report and stored designs. Try [`examples/synthetic_designs.csv`](examples/synthetic_designs.csv). |
-| **Batch Optimization** | Pick a validated dataset, select designs, objective and seed (default 42), start a batch; watch jobs live; cancel, retry. **Analysis** per job: summary cards, interactive best/mean-per-generation chart (recorded GA values; live while running, kept for failed/cancelled jobs), final-population ranking with details and copyable sequences, final fitness distribution. Results from before this feature have no ranking, and the UI says so. |
+| **Batch Optimization** | Pick a validated dataset, select designs, objective, search method and seed (default 42); optionally change the GA settings under *Advanced GA settings*; start a batch. Designs the chosen objective cannot score are disabled with the reason (the server also refuses such batches with 422). With more designs than are loaded, *Select all designs in dataset* sends the batch without `design_ids`. Then watch jobs live; cancel, retry. **Analysis** per job: summary cards, interactive best/mean-per-generation chart (recorded GA values; live while running, kept for failed/cancelled jobs), final-population ranking with details and copyable sequences, final fitness distribution. Results from before this feature have no ranking, and the UI says so. |
+| **Structures** | Import oxDNA (topology, then configuration) or caDNAno JSON, optionally linked to a design (raw-body uploads, no multipart). The list shows status (ready / topology only / invalid), origin, issue codes and a link to the 3D viewer; *Convert to oxDNA* (square / honeycomb lattice) appears only when tacoxDNA is available. |
 | **3D Viewer** | Pick a design, a completed job or an imported structure. With a valid oxDNA structure: **molecular mode** (stored coordinates, strands coloured by verified identity). Otherwise, or on request: the index-space **schematic**, with the missing structural data listed. |
 | **System status** | MongoDB, Redis and storage readiness. |
 
-GA settings are fixed: population 50, 100 generations, mutation 0.05, crossover 0.8, elitism 2, tournament size 3,
-maximize; only the seed is user-configurable.
+**Search method** (per batch, `"method"` in `POST /batches`):
+- `auto` (default): if a design has at most `ORIGAMI_EXHAUSTIVE_AUTO_MAX` (4096) combinations of supplied variants,
+  every combination is scored (exact optimum under the objective); otherwise the GA runs.
+- `ga`: always the GA. `exhaustive`: always enumerate; refused (422) above `ORIGAMI_EXHAUSTIVE_MAX_COMBINATIONS`.
+
+Exhaustive results have the same shape as GA results (best genome, components, selected variants, top 10 candidates)
+with `method: "exhaustive"`, an empty `fitness_history` and a note that no generations were run; the analysis page
+shows "Exhaustive search" and no chart. On the example designs both methods find the same best fitness.
+
+**GA settings** default to population 50, 100 generations, mutation 0.05, crossover 0.8, elitism 2, tournament size 3,
+maximize, seed 42. A batch may override `population_size`, `generations`, `mutation_rate`, `crossover_rate`,
+`elitism` and `tournament_size`; values are checked by `GAParameters` (422 if invalid, e.g. elitism >= population)
+and limited by `ORIGAMI_GA_MAX_POPULATION` (500) and `ORIGAMI_GA_MAX_GENERATIONS` (1000). The settings used are
+stored on the batch and every job and shown on the batch page.
+
+**Demo objective display:** `synthetic_gc_balance_demo` stores score = -(mean GC deviation). The UI shows it as
+"mean GC deviation = X (lower is better)" with the stored score in smaller text; stored values are unchanged.
 
 ## Structures (oxDNA / caDNAno)
 
-Import real structure files through the API (there is no upload screen yet); view them in **3D Viewer → Imported
+Import real structure files on the **Structures** page or through the API; view them in **3D Viewer → Imported
 structure**, or automatically when you open a design the structure is linked to. Formats and validation codes:
 [docs/input-formats.md](docs/input-formats.md#structure-files).
 
@@ -212,7 +229,7 @@ Invoke-RestMethod -Headers $h "$api/datasets/$($ds.dataset.id)"
 
 # Batch over all designs (seed 42); the Idempotency-Key makes resubmits safe
 $b = Invoke-RestMethod -Method Post -Headers ($h + @{ "Idempotency-Key" = [guid]::NewGuid().ToString() }) `
-  -ContentType "application/json" -Body (@{ dataset_id = $ds.dataset.id; seed = 42 } | ConvertTo-Json) -Uri "$api/batches"
+  -ContentType "application/json" -Body (@{ dataset_id = $ds.dataset.id; seed = 42; method = "auto" } | ConvertTo-Json) -Uri "$api/batches"
 Invoke-RestMethod -Headers $h "$api/batches/$($b.id)"
 $jobs = (Invoke-RestMethod -Headers $h "$api/batches/$($b.id)/jobs").items
 Invoke-RestMethod -Headers $h "$api/jobs/$($jobs[0].id)/result"
@@ -226,7 +243,8 @@ Invoke-RestMethod -Headers $h "$api/jobs/$($jobs[0].id)/result"
 | POST, DELETE | `/datasets/{id}/ingest`, `/datasets/{id}` | re-run validation / soft delete |
 | GET | `/datasets/{id}/report`, `/datasets/{id}/report/download` | validation summary / full report |
 | GET | `/datasets/{id}/designs`, `/designs/{id}` | design summaries / full design |
-| POST | `/batches` | `{dataset_id, design_ids?, seed?, name?}` + optional `Idempotency-Key` |
+| POST | `/batches` | `{dataset_id, design_ids?, seed?, name?, fitness?, method?, population_size?, generations?, mutation_rate?, crossover_rate?, elitism?, tournament_size?}` + optional `Idempotency-Key`; 422 if the objective cannot score a design (up to 20 listed with the reason), and nothing is created |
+| GET | `/datasets/{id}/compatibility?fitness=` | per design `{design_id, external_id, compatible, reason}` (paged like `/designs`) |
 | GET | `/batches`, `/batches/{id}`, `/batches/{id}/jobs` | batch list / status and counts / jobs |
 | POST | `/batches/{id}/cancel` | cancel unfinished jobs |
 | GET | `/jobs/{id}`, `/jobs/{id}/result` | job status and progress / full result incl. fitness history, final-population ranking |
@@ -257,6 +275,9 @@ Compose, which builds them from the passwords below.
 | `ORIGAMI_MAX_JSON_BODY_BYTES` | 1 MiB | Limit for all other request bodies |
 | `ORIGAMI_INGEST_*` | see file | Row, design, error, length and size limits for ingestion |
 | `ORIGAMI_BATCH_MAX_DESIGNS` | `1000` | Designs per batch |
+| `ORIGAMI_GA_MAX_POPULATION`, `ORIGAMI_GA_MAX_GENERATIONS` | `500`, `1000` | Upper limits for GA settings in `POST /batches` |
+| `ORIGAMI_EXHAUSTIVE_AUTO_MAX` | `4096` | Method `auto` enumerates designs with at most this many combinations |
+| `ORIGAMI_EXHAUSTIVE_MAX_COMBINATIONS` | `1048576` | Largest search space accepted for method `exhaustive` |
 | `ORIGAMI_JOB_STALE_AFTER_S` | `300` | No heartbeat for this long: the job's worker is presumed lost |
 | `ORIGAMI_JOB_MAX_STALE_REQUEUES` | `2` | Automatic requeues of a lost job before it is marked failed |
 | `ORIGAMI_REAPER_INTERVAL_S` | `60` | How often the reaper runs |
@@ -421,7 +442,7 @@ machine; rerun the script rather than relying on these.
 
 ```
 backend/   src/origami_core · src/origami_api · src/origami_worker · scripts/ · tests/unit · tests/integration
-frontend/  src/api (generated types) · src/features/{datasets,designs,batches,viewer} · src/components · tests/
+frontend/  src/api (generated types) · src/features/{datasets,designs,batches,structures,viewer} · src/components · tests/
 examples/  synthetic example datasets (random sequences, not real designs)
 docs/      PLAN.md (plan + deviations) · input-formats.md (formats + validation codes)
 docker-compose.yml · .env.example

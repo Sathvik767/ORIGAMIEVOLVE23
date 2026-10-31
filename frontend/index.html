@@ -1,9 +1,19 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OrigamiEvolve</title>
+    <script>
+      // Apply the saved theme (or the OS preference on a first visit) before the first paint.
+      try {
+        var saved = localStorage.getItem("origami.theme");
+        var light = saved ? saved === "light" : window.matchMedia("(prefers-color-scheme: light)").matches;
+        document.documentElement.dataset.theme = light ? "light" : "dark";
+      } catch (e) {
+        /* storage unavailable: keep the dark default */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

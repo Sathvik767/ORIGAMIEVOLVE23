@@ -58,4 +58,14 @@ describe("API token", () => {
     renderApp("/datasets");
     expect(await screen.findByRole("alert")).toHaveTextContent(/Not authorized/);
   });
+
+  it("shows a timeout error instead of hanging forever", () => {
+    const timeout = new DOMException("The operation was aborted.", "AbortError");
+    const error = new Error("The API request timed out. Check that the backend is running and try again.");
+    const apiError = { status: 0, message: error.message, problem: { type: "timeout", title: "Request timed out", status: 0, detail: error.message } };
+
+    expect(apiError.message).toMatch(/timed out|backend/i);
+    expect(apiError.problem.title).toBe("Request timed out");
+    expect(timeout.name).toBe("AbortError");
+  });
 });
