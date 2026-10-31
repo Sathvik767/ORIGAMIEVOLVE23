@@ -4,6 +4,7 @@ import type { BarVariant } from "./geometry";
 export interface SceneHandle {
   reset: () => void;
   zoom: (factor: number) => void; // >1 zooms in, <1 zooms out
+  snapshot?: () => string | null; // PNG data URL of the current view (idealized helix scene)
 }
 
 export const BAR_COLORS: Record<BarVariant, string> = {

@@ -14,6 +14,8 @@ import { cx } from "../../lib/cx";
 import { FitnessValue } from "../batches/FitnessValue";
 import { CanvasCard, ModeToggle, Swatch, useSceneColors, type ViewMode } from "./CanvasCard";
 import { buildIndexSchematic, MISSING_STRUCTURE } from "./geometry";
+import { HelixView } from "./HelixView";
+import { buildIdealHelix, type Lattice } from "./idealHelix";
 import { MolecularView, StructureInfo, StructureStatus } from "./MolecularPanel";
 import type { SceneHandle } from "./sceneTypes";
 
@@ -149,7 +151,9 @@ export function ViewerPage() {
   const jobId = params.get("job") ?? "";
   const structureParam = params.get("structure") ?? "";
   const sceneRef = useRef<SceneHandle>(null);
+  // Molecular when a valid imported structure exists, otherwise the idealized helix model (see `view`).
   const [mode, setMode] = useState<ViewMode>("molecular");
+  const [lattice, setLattice] = useState<Lattice>("honeycomb");
   const chosenStructure = useQuery({
     queryKey: ["structures", structureParam],
     queryFn: () => api.getStructure(structureParam),
@@ -183,7 +187,8 @@ export function ViewerPage() {
     enabled: Boolean(token && structure?.has_coordinates && (!jobId || job.data?.status === "completed")),
     staleTime: Infinity,
   });
-  const showMolecular = mode === "molecular" && Boolean(molecular.data);
+  const view: ViewMode = mode === "molecular" && !molecular.data ? "helix" : mode;
+  const showMolecular = view === "molecular";
   const design = useQuery({
     queryKey: ["designs", designId],
     queryFn: () => api.getDesign(designId),
@@ -196,12 +201,17 @@ export function ViewerPage() {
   const error = job.error ?? result.error ?? design.error ?? chosenStructure.error ?? molecular.error;
   const loading = (jobId && job.isPending) || (designId && design.isPending) || (jobId && job.data?.status === "completed" && result.isPending);
   const changed = result.data?.selected_variants.filter((v) => !v.is_original) ?? [];
-  const modeToggle = molecular.data ? <ModeToggle mode={mode} onMode={setMode} /> : undefined;
+  const helixModel = useMemo(
+    () => (design.data ? buildIdealHelix(design.data, lattice, result.data?.selected_variants) : null),
+    [design.data, lattice, result.data],
+  );
+  const modes: ViewMode[] = molecular.data ? ["molecular", "helix", "schematic"] : ["helix", "schematic"];
+  const modeToggle = molecular.data || geometry ? <ModeToggle mode={view} onMode={setMode} modes={modes} /> : undefined;
 
   const header = (
     <PageHeader
       title="3D Viewer"
-      description="Imported oxDNA coordinates when available; otherwise an index-space schematic built only from the supplied helix/start/end values."
+      description="Imported oxDNA coordinates when available; otherwise an idealized B-DNA helix model or an index-space schematic, both built only from the supplied helix/start/end values."
     />
   );
   if (!token)
@@ -292,8 +302,20 @@ export function ViewerPage() {
           )}
           {loading && !error && <LoadingBlock label="Loading design…" rows={6} />}
 
+          {design.data && view === "helix" && helixModel && (
+            <HelixView
+              design={design.data}
+              model={helixModel}
+              hasResult={Boolean(result.data)}
+              sceneRef={sceneRef}
+              modeToggle={modeToggle}
+              lattice={lattice}
+              onLattice={setLattice}
+            />
+          )}
           {design.data &&
             !showMolecular &&
+            !(view === "helix" && helixModel) &&
             (geometry ? (
               <CanvasCard
                 headingId="viewer-heading"
