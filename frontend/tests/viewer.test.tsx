@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DesignOut, MolecularGeometry } from "../src/api/client";
 import { buildIndexSchematic, type IndexSchematic } from "../src/features/viewer/geometry";
+import type { IdealHelixModel } from "../src/features/viewer/idealHelix";
 import { dataset, json, renderApp } from "./utils";
 
 // jsdom has no WebGL: replace the Three.js scene with a stand-in that reports what it was given.
@@ -21,6 +22,23 @@ vi.mock("../src/features/viewer/Scene3D", () => ({
       </div>
     );
   }),
+}));
+
+vi.mock("../src/features/viewer/IdealHelixScene3D", () => ({
+  IdealHelixScene3D: forwardRef<unknown, { model: IdealHelixModel; colorMode: string; onPick?: (s: unknown, pinned: boolean) => void }>(
+    function FakeHelix({ model, colorMode, onPick }, ref) {
+      useImperativeHandle(ref, () => ({ reset: mocks.reset, zoom: mocks.zoom, snapshot: () => "data:image/png;base64,AAAA" }));
+      if (mocks.fail) throw new Error("WebGL context could not be created");
+      return (
+        <div data-testid="helix-scene">
+          lattice={model.lattice} helices={model.helices.length} staples={model.staples.length} rungs={model.rungs.length} colour={colorMode}
+          <button type="button" onClick={() => onPick?.(model.staples[0], true)}>
+            pick first staple
+          </button>
+        </div>
+      );
+    },
+  ),
 }));
 
 vi.mock("../src/features/viewer/MolecularScene3D", () => ({
@@ -105,6 +123,9 @@ describe("3D viewer", () => {
     await screen.findByRole("option", { name: "synthetic_00000" });
     await userEvent.selectOptions(screen.getByLabelText("Design"), "des1");
 
+    // The idealized helix model is the default for designs; the schematic is one click away.
+    expect(await screen.findByTestId("helix-scene")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("radio", { name: "Schematic (index space)" }));
     expect(await screen.findByTestId("scene")).toHaveTextContent("lanes=2 original=3 selected=0 fixed=0");
     expect(screen.getByText(/Index-space schematic, not a molecular structure/)).toBeInTheDocument();
     const info = screen.getByRole("complementary", { name: "Design" });
@@ -136,6 +157,8 @@ describe("3D viewer", () => {
     });
     renderApp("/viewer?job=j1");
 
+    await screen.findByTestId("helix-scene");
+    await userEvent.click(screen.getByRole("radio", { name: "Schematic (index space)" }));
     expect(await screen.findByTestId("scene")).toHaveTextContent("lanes=2 original=1 selected=1 fixed=1");
     const info = screen.getByRole("complementary", { name: "Design" });
     expect(await within(info).findByText(/1 of 2 optimizable staples use a supplied variant/)).toBeInTheDocument();
@@ -168,7 +191,7 @@ describe("3D viewer", () => {
       "/api/v1/designs/missing": () => json(404, { type: "about:blank", title: "Not Found", status: 404, detail: "Design not found" }),
     });
     const view = renderApp("/viewer?design=des1");
-    await screen.findByTestId("scene");
+    await screen.findByTestId("helix-scene");
     await userEvent.click(screen.getByRole("button", { name: "Zoom in" }));
     await userEvent.click(screen.getByRole("button", { name: "Zoom out" }));
     await userEvent.click(screen.getByRole("button", { name: "Reset view" }));
@@ -241,7 +264,7 @@ describe("3D viewer: molecular mode", () => {
     expect(screen.getByText(/Index-space schematic, not a molecular structure/)).toBeInTheDocument();
   });
 
-  it("falls back to the schematic and explains why when a structure has no usable coordinates", async () => {
+  it("falls back to the idealized model (and the schematic) and explains why when a structure has no usable coordinates", async () => {
     serve({
       "/api/v1/designs/des1": () => json(200, design()),
       "/api/v1/structures": () =>
@@ -257,8 +280,10 @@ describe("3D viewer: molecular mode", () => {
 
     const banner = await screen.findByText(/failed validation, so no coordinates are shown/);
     expect(banner.closest("[role=status]")).toHaveTextContent("E_CONF_ORIENTATION a1 must be a unit vector (configuration line 4)");
-    expect(await screen.findByTestId("scene")).toBeInTheDocument(); // schematic fallback
+    expect(await screen.findByTestId("helix-scene")).toBeInTheDocument(); // idealized fallback (no usable coordinates)
     expect(screen.queryByRole("radio", { name: /Molecular/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("radio", { name: "Schematic (index space)" }));
+    expect(await screen.findByTestId("scene")).toBeInTheDocument(); // schematic still available
   });
 
   it("annotates verified staples with a completed job's variants without claiming folding", async () => {
@@ -306,5 +331,102 @@ describe("3D viewer: structure origin", () => {
     expect(screen.getByText(/Simulated with oxDNA: relax protocol, 500 steps/)).toBeInTheDocument();
     expect(screen.getAllByRole("alert").some((a) => /Not a molecular structure/.test(a.textContent ?? ""))).toBe(true);
     expect(screen.queryByText(/prediction/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("3D viewer: idealized helix model", () => {
+  const routes = (over: Record<string, () => Response> = {}) => ({
+    "/api/v1/structures": () => page([]),
+    "/api/v1/datasets": () => page([dataset]),
+    "/api/v1/designs/des1": () => json(200, design()),
+    ...over,
+  });
+
+  it("is the default for designs, labels itself honestly and switches modes", async () => {
+    serve(routes());
+    renderApp("/viewer?design=des1");
+
+    expect(await screen.findByTestId("helix-scene")).toHaveTextContent("lattice=honeycomb helices=2 staples=3 rungs=96 colour=base");
+    expect(
+      screen.getByText(
+        "Idealized B-DNA model generated from helix/start/end and the lattice you chose. Not a molecular structure: helix arrangement, crossovers and scaffold routing are not in the data.",
+      ),
+    ).toBeInTheDocument();
+    const modes = screen.getByRole("radiogroup", { name: "View mode" });
+    expect(within(modes).getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual([
+      "Idealized helix model",
+      "Schematic (index space)",
+    ]);
+    expect(screen.getByRole("radio", { name: "Idealized helix model" })).toBeChecked();
+    expect(screen.getByText(/Crossover connections/)).toBeInTheDocument(); // still listed as missing
+
+    await userEvent.click(screen.getByRole("radio", { name: "Schematic (index space)" }));
+    expect(await screen.findByTestId("scene")).toBeInTheDocument();
+    expect(screen.queryByTestId("helix-scene")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("radio", { name: "Idealized helix model" }));
+    expect(await screen.findByTestId("helix-scene")).toBeInTheDocument();
+  });
+
+  it("changes lattice and colour mode, updates the legend and exports a PNG", async () => {
+    serve(routes());
+    renderApp("/viewer?design=des1");
+    const scene = await screen.findByTestId("helix-scene");
+
+    const legend = screen.getByRole("list", { name: "Legend" });
+    expect(legend).toHaveTextContent("scaffold");
+    expect(legend).toHaveTextContent("base pairs by scaffold base:");
+    for (const base of ["A", "T", "G", "C"]) expect(within(legend).getByText(base)).toBeInTheDocument();
+    expect(legend).toHaveTextContent("crossovers and scaffold routing: not drawn (not in the data)");
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Lattice" }), "square");
+    expect(scene).toHaveTextContent("lattice=square");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Lattice" }), "single-row");
+    expect(scene).toHaveTextContent("lattice=single-row");
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Colour mode" }), "strand");
+    expect(scene).toHaveTextContent("colour=strand");
+    expect(legend).toHaveTextContent("base pairs coloured by staple");
+
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await userEvent.click(screen.getByRole("button", { name: "Download PNG" }));
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(click.mock.contexts[0]).toHaveAttribute("download", "synthetic_00000-ideal-helix-single-row.png");
+
+    await userEvent.click(screen.getByRole("button", { name: "Auto-rotate" }));
+    expect(screen.getByRole("button", { name: "Stop auto-rotate" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows a picked staple's position, length and GA decision", async () => {
+    serve(
+      routes({
+        "/api/v1/batches": () => page([]),
+        "/api/v1/jobs/j1": () => json(200, { id: "j1", type: "optimize", status: "completed", design_id: "des1", attempt: 1, updated_at: "2026-10-10T10:00:00Z" }),
+        "/api/v1/jobs/j1/result": () =>
+          json(200, {
+            design_id: "synthetic_00000",
+            best_genome: [1, 0],
+            best_fitness: -0.08203125,
+            best_components: {},
+            fitness_history: [],
+            stopped_early: false,
+            selected_variants: selected,
+            parameters: {},
+            fitness_function: { name: "synthetic_gc_balance_demo", version: "1.0.0", kind: "computational_proxy" },
+          }),
+      }),
+    );
+    renderApp("/viewer?job=j1");
+    await screen.findByTestId("helix-scene");
+    await screen.findByText("staple: GA chose a supplied variant");
+    await userEvent.click(screen.getByRole("button", { name: "pick first staple" }));
+
+    const card = screen.getByRole("group", { name: "Selected staple" });
+    expect(card).toHaveTextContent("s0000");
+    expect(card).toHaveTextContent("Helix0");
+    expect(card).toHaveTextContent("Start–end0–31");
+    expect(card).toHaveTextContent("32 nt (10.88 nm)");
+    expect(card).toHaveTextContent("GA chose supplied variant 1");
+    await userEvent.click(within(card).getByRole("button", { name: "Clear selection" }));
+    expect(screen.queryByRole("group", { name: "Selected staple" })).not.toBeInTheDocument();
   });
 });

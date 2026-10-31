@@ -15,12 +15,19 @@ export function useSceneColors() {
     : { background: "#eef2f6", guide: "#cbd5e1", bars: BAR_COLORS };
 }
 
-export type ViewMode = "molecular" | "schematic";
+export type ViewMode = "molecular" | "helix" | "schematic";
 
-/** Segmented molecular / schematic switch (a radio group, so each option keeps its accessible name). */
-export function ModeToggle({ mode, onMode }: { mode: ViewMode; onMode: (m: ViewMode) => void }) {
+export const MODE_LABELS: Record<ViewMode, string> = {
+  molecular: "Molecular (oxDNA coordinates)",
+  helix: "Idealized helix model",
+  schematic: "Schematic (index space)",
+};
+
+/** Segmented view-mode switch (a radio group, so each option keeps its accessible name). */
+export function ModeToggle({ mode, onMode, modes }: { mode: ViewMode; onMode: (m: ViewMode) => void; modes: ViewMode[] }) {
   const option = (value: ViewMode, label: string) => (
     <label
+      key={value}
       className={cx(
         "cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-primary",
         mode === value ? "bg-primary-strong text-primary-fg" : "text-muted hover:text-fg",
@@ -32,8 +39,7 @@ export function ModeToggle({ mode, onMode }: { mode: ViewMode; onMode: (m: ViewM
   );
   return (
     <div role="radiogroup" aria-label="View mode" className="flex gap-0.5 rounded-lg border border-border bg-surface/90 p-0.5 shadow-sm backdrop-blur">
-      {option("molecular", "Molecular (oxDNA coordinates)")}
-      {option("schematic", "Schematic (index space)")}
+      {modes.map((m) => option(m, MODE_LABELS[m]))}
     </div>
   );
 }
@@ -51,6 +57,7 @@ export function CanvasCard({
   legend,
   children,
   footer,
+  tools,
   showControls = true,
 }: {
   headingId: string;
@@ -61,6 +68,8 @@ export function CanvasCard({
   legend?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
+  /** Extra controls appended to the floating toolbar (e.g. lattice, colour mode, download). */
+  tools?: ReactNode;
   showControls?: boolean;
 }) {
   const [legendOpen, setLegendOpen] = useState(true);
@@ -80,11 +89,12 @@ export function CanvasCard({
             <div
               role="toolbar"
               aria-label="Scene controls"
-              className="pointer-events-auto flex gap-0.5 rounded-lg border border-border bg-surface/90 p-0.5 shadow-sm backdrop-blur"
+              className="pointer-events-auto flex flex-wrap items-center justify-end gap-0.5 rounded-lg border border-border bg-surface/90 p-0.5 shadow-sm backdrop-blur"
             >
               <IconButton label="Zoom in" icon={<ZoomIn aria-hidden className="size-4" />} onClick={() => sceneRef.current?.zoom(1.25)} />
               <IconButton label="Zoom out" icon={<ZoomOut aria-hidden className="size-4" />} onClick={() => sceneRef.current?.zoom(0.8)} />
               <IconButton label="Reset view" icon={<Maximize aria-hidden className="size-4" />} onClick={() => sceneRef.current?.reset()} />
+              {tools}
               {legend && (
                 <IconButton
                   label={legendOpen ? "Hide legend" : "Show legend"}

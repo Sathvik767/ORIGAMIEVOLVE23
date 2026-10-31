@@ -26,7 +26,7 @@ Research prototype for managing DNA origami datasets and running genetic-algorit
 | M2: GA engine | ✅ PyGAD optimizer over user-supplied staple variants, replaceable fitness interface, labelled demo fitness |
 | M3: Batch optimization | ✅ one Celery job per design, bounded concurrency, cancel/retry, stale-job recovery, results in file storage |
 | M4: Batch UI and monitoring | ✅ Batch Optimization page: create, list, live job status, cancel/retry, results with fitness chart |
-| 3D viewer | ✅ `/viewer`: index-space schematic from staple helix/start/end; real molecular coordinates not yet supported |
+| 3D viewer | ✅ `/viewer`: idealized B-DNA helix model and index-space schematic from staple helix/start/end; molecular mode for imported oxDNA coordinates |
 | M5: Integration and deployment readiness | ✅ end-to-end test, security fixes, benchmark, worker healthchecks, this README |
 | M8: Objective evaluation | ✅ pluggable objectives, staple–scaffold complementarity metric, GA vs random vs exhaustive evaluation |
 | M7: Real structure support | ✅ oxDNA import with coordinates, caDNAno topology validation, optional tacoxDNA conversion, molecular viewer mode |
@@ -119,7 +119,7 @@ The frontend keeps the token in `sessionStorage` (cleared when the tab closes). 
 | **Datasets** | Upload CSV / NDJSON / JSON ([formats](docs/input-formats.md)); see the validation report and stored designs. Try [`examples/synthetic_designs.csv`](examples/synthetic_designs.csv). |
 | **Batch Optimization** | Pick a validated dataset, select designs, objective, search method and seed (default 42); optionally change the GA settings under *Advanced GA settings*; start a batch. Designs the chosen objective cannot score are disabled with the reason (the server also refuses such batches with 422). With more designs than are loaded, *Select all designs in dataset* sends the batch without `design_ids`. Then watch jobs live; cancel, retry. **Analysis** per job: summary cards, interactive best/mean-per-generation chart (recorded GA values; live while running, kept for failed/cancelled jobs), final-population ranking with details and copyable sequences, final fitness distribution. Results from before this feature have no ranking, and the UI says so. |
 | **Structures** | Import oxDNA (topology, then configuration) or caDNAno JSON, optionally linked to a design (raw-body uploads, no multipart). The list shows status (ready / topology only / invalid), origin, issue codes and a link to the 3D viewer; *Convert to oxDNA* (square / honeycomb lattice) appears only when tacoxDNA is available. |
-| **3D Viewer** | Pick a design, a completed job or an imported structure. With a valid oxDNA structure: **molecular mode** (stored coordinates, strands coloured by verified identity). Otherwise, or on request: the index-space **schematic**, with the missing structural data listed. |
+| **3D Viewer** | Pick a design, a completed job or an imported structure. Three modes: **Molecular** (default when a valid oxDNA structure exists: stored coordinates, strands coloured by verified identity), **Idealized helix model** (default otherwise; see below) and the index-space **Schematic**. The missing structural data is always listed. |
 | **System status** | MongoDB, Redis and storage readiness. |
 
 **Search method** (per batch, `"method"` in `POST /batches`):
@@ -139,6 +139,27 @@ stored on the batch and every job and shown on the batch page.
 
 **Demo objective display:** `synthetic_gc_balance_demo` stores score = -(mean GC deviation). The UI shows it as
 "mean GC deviation = X (lower is better)" with the stored score in smaller text; stored values are unchanged.
+
+## 3D viewer: idealized helix model
+
+For designs without imported coordinates, the viewer draws an **idealized B-DNA model** built only from each staple's
+`helix`, `start` and `end` and the scaffold sequence (`frontend/src/features/viewer/idealHelix.ts`, constants documented
+at the top):
+
+- Textbook B-DNA: 0.34 nm rise per base pair, 10.5 bp per turn (34.29° twist), 1.0 nm backbone radius, staple strand
+  offset 144° from the scaffold strand (minor groove).
+- Helix centres 2.25 nm apart on a lattice **you choose** (honeycomb, square or single row). Helix indices are sorted and
+  placed in row-major order; this is a display choice, not the design's real arrangement.
+- Per helix: the scaffold as one backbone tube over the range its staples cover; each staple as its own tube on the
+  complementary strand; one base-pair rung per staple position, coloured by the scaffold base (A red, T green, G yellow,
+  C blue) or by strand. Staples: teal = original kept, amber = GA chose a supplied variant, grey = no variants; scaffold
+  blue.
+- **Not drawn, because the data does not contain them:** crossovers, scaffold routing between helices, loops/skips,
+  sequence-dependent geometry. The banner says so: it is not a molecular structure.
+- Toolbar: zoom, reset, auto-rotate (disabled when the OS asks for reduced motion), lattice, colour mode, legend,
+  **Download PNG**. Hover or click a staple to see its id, helix, start–end, length and the GA's decision.
+
+Screenshots: [`docs/screenshots/viewer-3d-helix/`](docs/screenshots/viewer-3d-helix/).
 
 ## Structures (oxDNA / caDNAno)
 

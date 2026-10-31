@@ -690,3 +690,17 @@ Bearer API tokens (hashed at rest), CORS allowlist, request size limits, strict 
   `codeSplitting` groups with `includeDependenciesRecursively: false`, so react stays in the entry chunk). three.js
   alone is ~756 kB minified (mostly the single `three.core.js` module), so it cannot be split under 500 kB.
   `chunkSizeWarningLimit` is 800 kB, and the entry chunk is ~400 kB.
+
+**3D viewer: idealized helix model (branch viewer/3d-helix)**
+- New default viewer mode for designs without usable imported coordinates: an **idealized B-DNA model** generated from
+  staple `helix`/`start`/`end` and the scaffold sequence (0.34 nm rise, 10.5 bp/turn, 1.0 nm backbone radius, 144°
+  minor-groove offset, 2.25 nm helix spacing). Molecular mode stays the default when a valid oxDNA structure exists;
+  the schematic is unchanged and one click away.
+- The lattice (honeycomb / square / single row) is a user choice, with a documented, deterministic index → position
+  mapping. It is labelled as a display assumption, as are the missing crossovers and scaffold routing; nothing is
+  inferred. The banner states it is not a molecular structure.
+- Rendering: CatmullRom tubes per scaffold/staple, one InstancedMesh for all base-pair rungs and one for end caps,
+  MeshStandardMaterial, hemisphere + two directional lights, damped orbit controls (render-on-demand, keeps rendering
+  only while damping or auto-rotate run), explicit disposal on unmount. The scene is lazy-loaded like the others.
+- Frontend only; no backend or API changes. Existing viewer tests that relied on the schematic being the default now
+  switch to it explicitly (assertions unchanged).
