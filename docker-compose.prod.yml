@@ -1,0 +1,49 @@
+# Production overlay. Use it together with docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --build
+#
+# Adds the "web" service (Caddy: built frontend + /api proxy + automatic HTTPS) and switches the
+# app to production settings. MongoDB, Redis and the API stay bound to 127.0.0.1 on the server;
+# only Caddy is reachable from the internet (ports 80 and 443).
+
+services:
+  web:
+    build:
+      context: ./frontend
+    image: origami-evolve-web
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+    profiles: ["full"]
+
+  # ORIGAMI_CORS_ORIGINS comes from .env (make-env.sh sets it to https://<domain>, or http://<ip> for DOMAIN=:80).
+  api:
+    environment:
+      ORIGAMI_ENV: production
+
+  worker-ingest:
+    environment:
+      ORIGAMI_ENV: production
+
+  worker-optimize:
+    environment:
+      ORIGAMI_ENV: production
+
+  beat:
+    environment:
+      ORIGAMI_ENV: production
+
+volumes:
+  caddy-data:
+  caddy-config:
