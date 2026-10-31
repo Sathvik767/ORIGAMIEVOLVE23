@@ -13,7 +13,7 @@ Research prototype for managing DNA origami datasets and running genetic-algorit
 ## Contents
 
 - [Status](#status) · [Architecture](#architecture) · [Prerequisites](#prerequisites)
-- [Quickstart (Windows PowerShell)](#quickstart-windows-powershell) · [API tokens](#api-tokens) · [Using the app](#using-the-app)
+- [Quickstart (Windows PowerShell)](#quickstart-windows-powershell) · [Deploying to a server](#deploying-to-a-server) · [API tokens](#api-tokens) · [Using the app](#using-the-app)
 - [Structures (oxDNA / caDNAno)](#structures-oxdna--cadnano) · [API usage](#api-usage) · [Configuration](#configuration-environment-variables) · [Tests and checks](#tests-and-checks)
 - [Benchmark](#benchmark) · [Troubleshooting](#troubleshooting) · [Limitations](#current-limitations) · [Security](#security)
 
@@ -95,6 +95,13 @@ cd backend
 python -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
 ```
+
+## Deploying to a server
+
+To run OrigamiEvolve on a public Linux server with HTTPS, follow [`deploy/DEPLOY.md`](deploy/DEPLOY.md). It uses
+`docker-compose.prod.yml` on top of `docker-compose.yml`, which adds a Caddy `web` service: it serves the built frontend,
+forwards `/api` to FastAPI and gets a Let's Encrypt certificate automatically. MongoDB, Redis and the API stay on
+`127.0.0.1`. `deploy/make-env.sh` creates the server's `.env` with random passwords and never overwrites an existing one.
 
 ## API tokens
 

@@ -1,0 +1,39 @@
+# Caddy web server for OrigamiEvolve (used by docker-compose.prod.yml).
+#  - Serves the built React app from /srv (single-page app: unknown paths fall back to index.html).
+#  - Forwards /api/* to the FastAPI container, so the browser only ever talks to one address.
+#  - With DOMAIN set to a real domain name, Caddy gets and renews HTTPS certificates automatically.
+#    With DOMAIN=":80" it serves plain HTTP (only for a first test by IP address).
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy {$API_UPSTREAM:api:8000}
+	}
+
+	handle {
+		root * {$SITE_ROOT:/srv}
+		try_files {path} /index.html
+		file_server
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@html not path /assets/*
+		header @html Cache-Control "no-cache"
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
