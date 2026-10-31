@@ -1,11 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
+import { Database, KeyRound } from "lucide-react";
 import { Link } from "react-router";
 
 import { api, type DatasetOut } from "../../api/client";
 import { ErrorMessage } from "../../components/ErrorMessage";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useToken } from "../../components/TokenContext";
-import { formatBytes, formatDate } from "../../lib/format";
+import { Card } from "../../components/ui/Card";
+import { EmptyState, LoadingBlock } from "../../components/ui/Feedback";
+import { RelativeTime } from "../../components/ui/RelativeTime";
+import { Table } from "../../components/ui/Table";
+import { formatBytes, formatCount } from "../../lib/format";
 
 const IN_PROGRESS = new Set(["uploaded", "ingesting"]);
 
@@ -15,7 +20,7 @@ export function isInProgress(d: DatasetOut): boolean {
 
 export function DatasetList() {
   const { token } = useToken();
-  const { data, error, isPending } = useQuery({
+  const { data, error, isPending, refetch } = useQuery({
     queryKey: ["datasets", "list"],
     queryFn: () => api.listDatasets(),
     enabled: Boolean(token),
@@ -24,50 +29,60 @@ export function DatasetList() {
   });
 
   return (
-    <section aria-labelledby="datasets-heading" className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 id="datasets-heading" className="mb-3 text-lg font-semibold text-slate-800">
-        Datasets
-      </h2>
-      {!token && <p className="text-sm text-slate-500">Set an API token in the header to see datasets.</p>}
-      {token && isPending && <p className="text-sm text-slate-500">Loading…</p>}
-      {error && <ErrorMessage error={error} />}
-      {data && data.items.length === 0 && <p className="text-sm text-slate-500">No datasets yet. Upload one above.</p>}
+    <Card title="Datasets" icon={<Database className="size-4" />}>
+      {!token && (
+        <EmptyState icon={<KeyRound className="size-5" />} title="Set an API token in the sidebar to see datasets.">
+          Create one with <code className="font-mono text-xs">python -m origami_api.cli create-token</code>.
+        </EmptyState>
+      )}
+      {token && isPending && <LoadingBlock label="Loading datasets…" rows={4} />}
+      {error && <ErrorMessage error={error} onRetry={() => void refetch()} />}
+      {data && data.items.length === 0 && (
+        <EmptyState icon={<Database className="size-5" />} title="No datasets yet. Upload one above.">
+          Try <code className="font-mono text-xs">examples/synthetic_designs.csv</code> to get started.
+        </EmptyState>
+      )}
       {data && data.items.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+        <Table>
+          <table>
+            <thead>
               <tr>
-                <th className="py-2 pr-4">Name</th>
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2 pr-4 text-right">Valid designs</th>
-                <th className="py-2 pr-4 text-right">Errors</th>
-                <th className="py-2 pr-4">Format</th>
-                <th className="py-2 pr-4 text-right">Size</th>
-                <th className="py-2">Uploaded</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th className="text-right">Valid designs</th>
+                <th className="text-right">Errors</th>
+                <th>Format</th>
+                <th className="text-right">Size</th>
+                <th>Uploaded</th>
               </tr>
             </thead>
             <tbody>
               {data.items.map((d) => (
-                <tr key={d.id} className="border-b border-slate-100 last:border-0">
-                  <td className="py-2 pr-4">
-                    <Link to={`/datasets/${d.id}`} className="font-medium text-slate-900 underline-offset-2 hover:underline">
+                <tr key={d.id}>
+                  <td>
+                    <Link to={`/datasets/${d.id}`} className="font-medium text-fg hover:text-primary hover:underline">
                       {d.name}
                     </Link>
+                    {d.original_filename && <div className="font-mono text-xs text-subtle">{d.original_filename}</div>}
                   </td>
-                  <td className="py-2 pr-4">
+                  <td>
                     <StatusBadge status={d.status} />
                   </td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{d.counts.designs_valid ?? 0}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{d.counts.error_count ?? 0}</td>
-                  <td className="py-2 pr-4 font-mono text-xs">{d.format}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{formatBytes(d.size_bytes)}</td>
-                  <td className="py-2 text-slate-500">{formatDate(d.created_at)}</td>
+                  <td className="text-right font-mono">{formatCount(d.counts.designs_valid ?? 0)}</td>
+                  <td className={`text-right font-mono ${d.counts.error_count ? "text-danger" : "text-subtle"}`}>
+                    {formatCount(d.counts.error_count ?? 0)}
+                  </td>
+                  <td className="font-mono text-xs text-muted uppercase">{d.format}</td>
+                  <td className="text-right font-mono text-muted">{formatBytes(d.size_bytes)}</td>
+                  <td className="whitespace-nowrap text-muted">
+                    <RelativeTime iso={d.created_at} />
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </Table>
       )}
-    </section>
+    </Card>
   );
 }

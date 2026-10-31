@@ -1,12 +1,36 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import {
+  Ban,
+  ChartLine,
+  CircleCheck,
+  CircleStop,
+  CircleX,
+  Clock,
+  Eye,
+  KeyRound,
+  Layers,
+  ListTree,
+  LoaderCircle,
+  OctagonX,
+  RotateCw,
+} from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
 import { api, type BatchOut, type JobOut, type JobPage } from "../../api/client";
 import { ErrorMessage } from "../../components/ErrorMessage";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useToken } from "../../components/TokenContext";
-import { formatDate } from "../../lib/format";
+import type { Tone } from "../../components/ui/Badge";
+import { Button, IconButton } from "../../components/ui/Button";
+import { Card } from "../../components/ui/Card";
+import { EmptyState, LoadingBlock, PageHeader, ProgressBar } from "../../components/ui/Feedback";
+import { RelativeTime } from "../../components/ui/RelativeTime";
+import { StatCard } from "../../components/ui/StatCard";
+import { Table } from "../../components/ui/Table";
+import { useToast } from "../../components/ui/Toast";
+import { cx } from "../../lib/cx";
+import { formatCount } from "../../lib/format";
 import { FitnessValue } from "./FitnessValue";
 import { JobResult } from "./JobResult";
 import {
@@ -22,11 +46,17 @@ import {
 function Progress({ job }: { job: JobOut }) {
   const generation = typeof job.progress?.generation === "number" ? job.progress.generation : undefined;
   const total = typeof job.progress?.total === "number" ? job.progress.total : undefined;
-  if (generation === undefined || !total) return <span className="text-slate-400">—</span>;
+  if (generation === undefined || !total) return <span className="text-subtle">—</span>;
   return (
-    <div className="flex min-w-28 items-center gap-2">
-      <progress className="h-1.5 w-20" value={generation} max={total} aria-label={`Generation ${generation} of ${total}`} />
-      <span className="tabular-nums text-xs">
+    <div className="flex min-w-32 items-center gap-2">
+      <ProgressBar
+        className="w-20"
+        value={generation}
+        max={total}
+        label={`Generation ${generation} of ${total}`}
+        tone={job.status === "completed" ? "success" : "primary"}
+      />
+      <span className="font-mono text-xs text-muted">
         {generation}/{total}
       </span>
     </div>
@@ -45,6 +75,7 @@ export function BatchDetail() {
   const { batchId = "" } = useParams();
   const { token } = useToken();
   const queryClient = useQueryClient();
+  const toast = useToast();
   // The analysis panel's job lives in the URL (?job=...), so it survives a page refresh. Without a choice,
   // the first completed job is shown so the generation chart is visible straight away; ?job=none = closed.
   const [params, setParams] = useSearchParams();
@@ -87,177 +118,206 @@ export function BatchDetail() {
   }, [finished, queryClient]);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["batches", batchId] });
-  const cancelBatch = useMutation({ mutationFn: () => api.cancelBatch(batchId), onSettled: refresh });
-  const cancelJob = useMutation({ mutationFn: (id: string) => api.cancelJob(id), onSettled: refresh });
-  const retryJob = useMutation({ mutationFn: (id: string) => api.retryJob(id), onSettled: refresh });
+  const cancelBatch = useMutation({
+    mutationFn: () => api.cancelBatch(batchId),
+    onSuccess: () => toast("Cancellation requested for unfinished jobs"),
+    onSettled: refresh,
+  });
+  const cancelJob = useMutation({
+    mutationFn: (id: string) => api.cancelJob(id),
+    onSuccess: () => toast("Job cancelled"),
+    onSettled: refresh,
+  });
+  const retryJob = useMutation({
+    mutationFn: (id: string) => api.retryJob(id),
+    onSuccess: () => toast("Job queued for retry"),
+    onSettled: refresh,
+  });
   const actionError = cancelBatch.error ?? cancelJob.error ?? retryJob.error;
   const busy = cancelBatch.isPending || cancelJob.isPending || retryJob.isPending;
 
-  if (!token) return <p className="text-sm text-slate-500">Set an API token in the header.</p>;
-  if (batch.error) return <ErrorMessage error={batch.error} />;
-  if (!batch.data) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (!token) return <EmptyState icon={<KeyRound className="size-5" />} title="Set an API token in the sidebar." />;
+  if (batch.error) return <ErrorMessage error={batch.error} onRetry={() => void batch.refetch()} />;
+  if (!batch.data) return <LoadingBlock label="Loading batch…" rows={6} />;
 
   const b = batch.data;
-  const counts: [string, number | undefined][] = [
-    ["Queued", b.counts.queued],
-    ["Running", b.counts.running],
-    ["Completed", b.counts.completed],
-    ["Failed", b.counts.failed],
-    ["Cancelled", b.counts.cancelled],
+  const doneJobs = (b.counts.completed ?? 0) + (b.counts.failed ?? 0) + (b.counts.cancelled ?? 0);
+  const counts: { label: string; value: number | undefined; tone: Tone; icon: ReactNode }[] = [
+    { label: "Queued", value: b.counts.queued, tone: "neutral", icon: <Clock className="size-4" /> },
+    { label: "Running", value: b.counts.running, tone: "info", icon: <LoaderCircle className="size-4" /> },
+    { label: "Completed", value: b.counts.completed, tone: "success", icon: <CircleCheck className="size-4" /> },
+    { label: "Failed", value: b.counts.failed, tone: "danger", icon: <CircleX className="size-4" /> },
+    { label: "Cancelled", value: b.counts.cancelled, tone: "neutral", icon: <Ban className="size-4" /> },
   ];
 
   return (
     <div className="space-y-6">
-      <nav className="text-sm">
-        <Link to="/batches" className="text-slate-500 hover:text-slate-800">
-          ← Batches
-        </Link>
-      </nav>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold">{b.name ?? "Unnamed batch"}</h2>
-            <p className="font-mono text-xs text-slate-500">{b.id}</p>
-          </div>
-          <StatusBadge status={b.status} />
-        </div>
-        <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-6">
-          <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
-            <dt className="text-xs text-slate-500">Jobs</dt>
-            <dd className="text-lg font-semibold tabular-nums">{b.total_jobs}</dd>
-          </div>
-          {counts.map(([label, value]) => (
-            <div key={label} className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
-              <dt className="text-xs text-slate-500">{label}</dt>
-              <dd className="text-lg font-semibold tabular-nums">{value ?? "—"}</dd>
-            </div>
-          ))}
-        </dl>
-        <p className="mt-3 text-xs text-slate-500">
-          Created {formatDate(b.created_at)}
-          {b.finished_at ? ` · finished ${formatDate(b.finished_at)}` : ""} · seed {String(b.params.seed ?? "—")} ·
-          fitness <span className="font-mono">{b.fitness.name}</span> ({b.fitness.kind}) · method{" "}
-          <span className="font-mono">{b.method}</span>
-        </p>
-        <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600" aria-label="GA settings used">
-          {(Object.keys(GA_DEFAULTS) as (keyof typeof GA_DEFAULTS)[]).map((k) => (
-            <div key={k} className="flex gap-1">
-              <dt className="text-slate-500">{k.replaceAll("_", " ")}</dt>
-              <dd className="tabular-nums">
-                {String(b.params[k] ?? "—")}
-                {b.params[k] !== undefined && b.params[k] !== GA_DEFAULTS[k] ? " (custom)" : ""}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        {b.method !== "ga" && (
-          <p className="mt-1 text-xs text-slate-500">
-            GA settings apply only to jobs that ran the GA; each job&apos;s method is shown below.
-          </p>
-        )}
-        {active && <p className="mt-2 text-sm text-sky-800">Jobs are running; this page updates automatically.</p>}
-        <div className="mt-4">
-          <button
-            type="button"
+      <PageHeader
+        eyebrow="Batch"
+        title={
+          <span className="flex flex-wrap items-center gap-3">
+            {b.name ?? "Unnamed batch"} <StatusBadge status={b.status} />
+          </span>
+        }
+        description={<span className="font-mono text-xs">{b.id}</span>}
+        actions={
+          <Button
+            variant="danger"
+            icon={<OctagonX aria-hidden className="size-4" />}
             disabled={!isBatchActive(b) || busy}
             onClick={() => {
               if (window.confirm("Cancel all unfinished jobs in this batch?")) cancelBatch.mutate();
             }}
-            className="rounded border border-red-200 px-3 py-1 text-sm text-red-700 disabled:opacity-40"
           >
             Cancel batch
-          </button>
+          </Button>
+        }
+      />
+
+      <Card>
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <StatCard label="Jobs" value={formatCount(b.total_jobs)} icon={<Layers className="size-4" />} tone="primary" />
+          {counts.map((c) => (
+            <StatCard key={c.label} label={c.label} value={formatCount(c.value)} icon={c.icon} tone={c.value ? c.tone : "neutral"} />
+          ))}
+        </dl>
+        <div className="mt-5 space-y-1.5">
+          <div className="flex items-center justify-between text-xs text-muted">
+            <span>Batch progress</span>
+            <span className="font-mono">
+              {formatCount(doneJobs)} / {formatCount(b.total_jobs)} finished
+            </span>
+          </div>
+          <ProgressBar
+            label={`${doneJobs} of ${b.total_jobs} jobs finished`}
+            value={doneJobs}
+            max={b.total_jobs}
+            className="h-2"
+            segments={[
+              { value: b.counts.completed ?? 0, tone: "success" },
+              { value: b.counts.failed ?? 0, tone: "danger" },
+              { value: b.counts.cancelled ?? 0, tone: "neutral" },
+            ]}
+          />
         </div>
-      </section>
+        {active && (
+          <p className="mt-3 flex items-center gap-2 text-sm text-info">
+            <LoaderCircle aria-hidden className="size-4 motion-safe:animate-spin" />
+            Jobs are running; this page updates automatically.
+          </p>
+        )}
+        <div className="mt-5 grid gap-4 border-t border-border pt-4 lg:grid-cols-[1fr_auto]">
+          <p className="text-xs text-muted">
+            Created <RelativeTime iso={b.created_at} />
+            {b.finished_at ? (
+              <>
+                {" "}· finished <RelativeTime iso={b.finished_at} />
+              </>
+            ) : null}{" "}
+            · seed <span className="font-mono">{String(b.params.seed ?? "—")}</span> · fitness{" "}
+            <span className="font-mono">{b.fitness.name}</span> ({b.fitness.kind}) · method{" "}
+            <span className="font-mono">{b.method}</span>
+          </p>
+        </div>
+        <dl className="mt-2 flex flex-wrap gap-2 text-xs" aria-label="GA settings used">
+          {(Object.keys(GA_DEFAULTS) as (keyof typeof GA_DEFAULTS)[]).map((k) => {
+            const custom = b.params[k] !== undefined && b.params[k] !== GA_DEFAULTS[k];
+            return (
+              <div
+                key={k}
+                className={cx(
+                  "flex gap-1.5 rounded-md border px-2 py-1",
+                  custom ? "border-primary/35 bg-primary-soft" : "border-border bg-surface-raised/60",
+                )}
+              >
+                <dt className="text-muted">{k.replaceAll("_", " ")}</dt>
+                <dd className={cx("font-mono", custom ? "text-primary" : "text-fg")}>
+                  {String(b.params[k] ?? "—")}
+                  {custom ? " (custom)" : ""}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+        {b.method !== "ga" && (
+          <p className="mt-2 text-xs text-subtle">GA settings apply only to jobs that ran the GA; each job&apos;s method is shown below.</p>
+        )}
+      </Card>
 
       {actionError && <ErrorMessage error={actionError} />}
 
-      <section aria-labelledby="jobs-heading" className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 id="jobs-heading" className="mb-3 text-lg font-semibold text-slate-800">
-          Jobs
-        </h2>
-        {jobs.isPending && <p className="text-sm text-slate-500">Loading jobs…</p>}
-        {jobs.error && <ErrorMessage error={jobs.error} />}
-        {jobs.data && jobs.data.items.length === 0 && <p className="text-sm text-slate-500">No jobs.</p>}
+      <Card title="Jobs" icon={<ListTree className="size-4" />}>
+        {jobs.isPending && <LoadingBlock label="Loading jobs…" rows={4} />}
+        {jobs.error && <ErrorMessage error={jobs.error} onRetry={() => void jobs.refetch()} />}
+        {jobs.data && jobs.data.items.length === 0 && <EmptyState icon={<ListTree className="size-5" />} title="No jobs." />}
         {jobs.data && jobs.data.items.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+          <Table>
+            <table>
+              <thead>
                 <tr>
-                  <th className="py-2 pr-4">Design</th>
-                  <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Method</th>
-                  <th className="py-2 pr-4">Progress</th>
-                  <th className="py-2 pr-4 text-right">Best fitness</th>
-                  <th className="py-2 pr-4 text-right">Attempt</th>
-                  <th className="py-2 pr-4">Error</th>
-                  <th className="py-2">Actions</th>
+                  <th>Design</th>
+                  <th>Status</th>
+                  <th>Method</th>
+                  <th>Progress</th>
+                  <th className="text-right">Best fitness</th>
+                  <th className="text-right">Attempt</th>
+                  <th>Error</th>
+                  <th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {jobs.data.items.map((job) => (
-                  <tr key={job.id} className="border-b border-slate-100 align-top last:border-0">
-                    <td className="py-2 pr-4 font-mono text-xs">{job.external_id ?? job.design_id ?? job.id}</td>
-                    <td className="py-2 pr-4">
+                  <tr key={job.id} className={cx(job.id === resultJobId && "bg-primary-soft/60")}>
+                    <td className="font-mono text-xs whitespace-nowrap">{job.external_id ?? job.design_id ?? job.id}</td>
+                    <td className="whitespace-nowrap">
                       <StatusBadge status={job.status} />
-                      {job.cancel_requested && isJobActive(job) && (
-                        <span className="ml-1 text-xs text-slate-500">cancelling…</span>
-                      )}
+                      {job.cancel_requested && isJobActive(job) && <span className="ml-1 text-xs text-muted">cancelling…</span>}
                     </td>
-                    <td className="py-2 pr-4 text-xs">{methodLabel(job)}</td>
-                    <td className="py-2 pr-4">
+                    <td className="font-mono text-xs text-muted">{methodLabel(job)}</td>
+                    <td>
                       <Progress job={job} />
                     </td>
-                    <td className="py-2 pr-4 text-right tabular-nums">
+                    <td className="text-right">
                       <FitnessValue
                         fitness={job.fitness}
                         score={bestFitness(job)}
                         components={job.result?.best_components as Record<string, unknown> | undefined}
                       />
                     </td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{job.attempt}</td>
-                    <td className="py-2 pr-4 text-xs text-red-800">
+                    <td className="text-right font-mono">{job.attempt}</td>
+                    <td className="max-w-64 text-xs text-danger">
                       {job.error ? String(job.error.message ?? job.error.code ?? "Failed") : ""}
                     </td>
-                    <td className="py-2">
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        <button
-                          type="button"
+                    <td>
+                      <div className="flex justify-end gap-1">
+                        <IconButton
+                          label={job.status === "completed" ? "View result" : "View progress"}
+                          icon={job.status === "completed" ? <ChartLine aria-hidden className="size-4" /> : <Eye aria-hidden className="size-4" />}
                           disabled={job.status === "queued"}
                           onClick={() => openAnalysis(job.id)}
-                          className="rounded border border-slate-300 px-2 py-0.5 disabled:opacity-40"
-                        >
-                          {job.status === "completed" ? "View result" : "View progress"}
-                        </button>
-                        <button
-                          type="button"
+                        />
+                        <IconButton
+                          label="Cancel"
+                          icon={<CircleStop aria-hidden className="size-4" />}
                           disabled={!canCancelJob(job) || busy}
                           onClick={() => cancelJob.mutate(job.id)}
-                          className="rounded border border-slate-300 px-2 py-0.5 disabled:opacity-40"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
+                        />
+                        <IconButton
+                          label="Retry"
+                          icon={<RotateCw aria-hidden className="size-4" />}
                           disabled={!canRetryJob(job) || busy}
                           onClick={() => retryJob.mutate(job.id)}
-                          className="rounded border border-slate-300 px-2 py-0.5 disabled:opacity-40"
-                        >
-                          Retry
-                        </button>
+                        />
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </Table>
         )}
-        {jobs.data?.next_cursor && (
-          <p className="mt-2 text-xs text-slate-500">Showing the first {jobs.data.items.length} jobs.</p>
-        )}
-      </section>
+        {jobs.data?.next_cursor && <p className="mt-2 text-xs text-muted">Showing the first {jobs.data.items.length} jobs.</p>}
+      </Card>
 
       {resultJobId && (
         <JobResult
@@ -269,6 +329,9 @@ export function BatchDetail() {
           onClose={() => openAnalysis(null)}
         />
       )}
+      <Link to="/batches" className="text-sm text-muted hover:text-fg">
+        ← Batches
+      </Link>
     </div>
   );
 }

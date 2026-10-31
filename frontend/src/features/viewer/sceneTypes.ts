@@ -12,6 +12,13 @@ export const BAR_COLORS: Record<BarVariant, string> = {
   "not-optimized": "#94a3b8", // light slate: staple without variants (fixed)
 };
 
+/** Same meanings on the dark scene background: lighter tones so every bar stays visible. */
+export const BAR_COLORS_DARK: Record<BarVariant, string> = {
+  original: "#a8b8cc",
+  "selected-variant": "#fbbf24",
+  "not-optimized": "#5b6b80",
+};
+
 export const MOLECULAR_COLORS = {
   scaffold: "#2563eb", // blue: strand verified as the design's scaffold (exact sequence match)
   staple: "#64748b", // slate: strand verified as a design staple

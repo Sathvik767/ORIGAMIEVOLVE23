@@ -206,9 +206,12 @@ describe("batch optimization", () => {
     await userEvent.click(within(done).getByRole("button", { name: "View result" }));
 
     const panel = await screen.findByRole("region", { name: /Analysis: synthetic_00002/ });
-    expect(within(panel).getByText("Initial best").nextSibling).toHaveTextContent("-0.060000");
-    expect(within(panel).getByText("Final best").nextSibling).toHaveTextContent("-0.046875");
-    expect(within(panel).getByText("Improvement").nextSibling).toHaveTextContent("0.013125");
+    // Fitness is displayed to 4 decimals; the exact stored value stays available in the tooltip.
+    expect(within(panel).getByText("Initial best").nextSibling).toHaveTextContent("-0.0600");
+    const finalBest = within(panel).getByText("Final best").nextSibling as HTMLElement;
+    expect(finalBest).toHaveTextContent("-0.0469");
+    expect(finalBest.querySelector("[title]")).toHaveAttribute("title", "score -0.046875");
+    expect(within(panel).getByText("Improvement").nextSibling).toHaveTextContent("0.0131");
     expect(within(panel).getByRole("img", { name: /Best and mean fitness over 3 recorded generations/ })).toBeInTheDocument();
     expect(within(panel).getByText(/Demo objective \(synthetic data only, not a scientific measure\)/)).toBeInTheDocument();
     expect(within(panel).getByText(/not evidence that the design folds/)).toBeInTheDocument();

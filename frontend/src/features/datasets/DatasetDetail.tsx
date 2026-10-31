@@ -1,11 +1,21 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Boxes, FileText, Hash, HardDrive, KeyRound, Layers, LoaderCircle, RotateCw, Search, Trash2, TriangleAlert } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
 import { api } from "../../api/client";
 import { ErrorMessage } from "../../components/ErrorMessage";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useToken } from "../../components/TokenContext";
-import { formatBytes, formatDate } from "../../lib/format";
+import { Button } from "../../components/ui/Button";
+import { Card } from "../../components/ui/Card";
+import { Callout, EmptyState, LoadingBlock, PageHeader } from "../../components/ui/Feedback";
+import { Input } from "../../components/ui/Field";
+import { RelativeTime } from "../../components/ui/RelativeTime";
+import { StatCard } from "../../components/ui/StatCard";
+import { Table } from "../../components/ui/Table";
+import { useToast } from "../../components/ui/Toast";
+import { formatBytes, formatCount } from "../../lib/format";
 import { isInProgress } from "./DatasetList";
 import { ReportView } from "./ReportView";
 
@@ -14,6 +24,8 @@ export function DatasetDetail() {
   const { token } = useToken();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const toast = useToast();
+  const [filter, setFilter] = useState("");
 
   const dataset = useQuery({
     queryKey: ["datasets", datasetId],
@@ -35,22 +47,32 @@ export function DatasetDetail() {
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: hasReport,
   });
+  const allDesigns = useMemo(() => designs.data?.pages.flatMap((p) => p.items) ?? [], [designs.data]);
+  const needle = filter.trim().toLowerCase();
+  const shown = needle
+    ? allDesigns.filter((s) => s.external_id.toLowerCase().includes(needle) || (s.name ?? "").toLowerCase().includes(needle))
+    : allDesigns;
 
   const reingest = useMutation({
     mutationFn: () => api.reingest(datasetId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["datasets"] }),
+    onSuccess: () => {
+      toast("Validation restarted");
+      return queryClient.invalidateQueries({ queryKey: ["datasets"] });
+    },
   });
   const remove = useMutation({
     mutationFn: () => api.deleteDataset(datasetId),
     onSuccess: async () => {
+      toast("Dataset deleted");
       await queryClient.invalidateQueries({ queryKey: ["datasets"] });
       void navigate("/datasets");
     },
   });
 
-  if (!token) return <p className="text-sm text-slate-500">Set an API token in the header.</p>;
-  if (dataset.error) return <ErrorMessage error={dataset.error} />;
-  if (!dataset.data) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (!token)
+    return <EmptyState icon={<KeyRound className="size-5" />} title="Set an API token in the sidebar." />;
+  if (dataset.error) return <ErrorMessage error={dataset.error} onRetry={() => void dataset.refetch()} />;
+  if (!dataset.data) return <LoadingBlock label="Loading dataset…" rows={6} />;
 
   const d = dataset.data;
   const busy = isInProgress(d);
@@ -58,119 +80,170 @@ export function DatasetDetail() {
 
   return (
     <div className="space-y-6">
-      <nav className="text-sm">
-        <Link to="/datasets" className="text-slate-500 hover:text-slate-800">
-          ← Datasets
-        </Link>
-      </nav>
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold">{d.name}</h2>
-            {d.description && <p className="text-sm text-slate-600">{d.description}</p>}
-          </div>
-          <StatusBadge status={d.status} />
-        </div>
-        <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
-          <dt className="text-slate-500">File</dt>
-          <dd className="truncate">{d.original_filename ?? "—"}</dd>
-          <dt className="text-slate-500">Format</dt>
-          <dd className="font-mono text-xs">{d.format}</dd>
-          <dt className="text-slate-500">Size</dt>
-          <dd>{formatBytes(d.size_bytes)}</dd>
-          <dt className="text-slate-500">Uploaded</dt>
-          <dd>{formatDate(d.created_at)}</dd>
-          <dt className="text-slate-500">SHA-256</dt>
-          <dd className="col-span-3 truncate font-mono text-xs" title={d.sha256}>
+      <PageHeader
+        eyebrow="Dataset"
+        title={
+          <span className="flex flex-wrap items-center gap-3">
+            {d.name} <StatusBadge status={d.status} />
+          </span>
+        }
+        description={d.description ?? undefined}
+        actions={
+          <>
+            <Button
+              disabled={busy || reingest.isPending}
+              loading={reingest.isPending}
+              icon={<RotateCw aria-hidden className="size-4" />}
+              onClick={() => reingest.mutate()}
+            >
+              Re-run validation
+            </Button>
+            <Button
+              variant="danger"
+              disabled={busy || remove.isPending}
+              icon={<Trash2 aria-hidden className="size-4" />}
+              onClick={() => {
+                if (window.confirm(`Delete dataset "${d.name}"?`)) remove.mutate();
+              }}
+            >
+              Delete
+            </Button>
+          </>
+        }
+      />
+
+      <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Valid designs" value={formatCount(d.counts.designs_valid ?? 0)} icon={<Boxes className="size-4" />} tone="success" />
+        <StatCard
+          label="Rejected designs"
+          value={formatCount(d.counts.designs_invalid ?? 0)}
+          icon={<TriangleAlert className="size-4" />}
+          tone={d.counts.designs_invalid ? "warning" : "neutral"}
+        />
+        <StatCard label="Records read" value={formatCount(d.counts.records_read ?? 0)} icon={<Layers className="size-4" />} tone="info" />
+        <StatCard label="File size" value={formatBytes(d.size_bytes)} hint={d.format.toUpperCase()} icon={<HardDrive className="size-4" />} />
+      </dl>
+
+      <Card title="File" icon={<FileText className="size-4" />}>
+        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr_auto_1fr]">
+          <dt className="text-muted">File</dt>
+          <dd className="truncate font-mono text-xs leading-5">{d.original_filename ?? "—"}</dd>
+          <dt className="text-muted">Uploaded</dt>
+          <dd>
+            <RelativeTime iso={d.created_at} />
+          </dd>
+          <dt className="text-muted">Format</dt>
+          <dd className="font-mono text-xs leading-5 uppercase">{d.format}</dd>
+          <dt className="flex items-center gap-1 text-muted">
+            <Hash aria-hidden className="size-3.5" />
+            SHA-256
+          </dt>
+          <dd className="truncate font-mono text-xs leading-5" title={d.sha256}>
             {d.sha256}
           </dd>
         </dl>
-        {busy && <p className="mt-4 text-sm text-sky-800">Validating… this page updates automatically.</p>}
-        {jobError && (
-          <p role="alert" className="mt-4 text-sm text-red-800">
-            Ingestion failed: {jobError.message} <span className="font-mono text-xs">({jobError.code})</span>
+        {busy && (
+          <p className="mt-4 flex items-center gap-2 text-sm text-info">
+            <LoaderCircle aria-hidden className="size-4 motion-safe:animate-spin" />
+            Validating… this page updates automatically.
           </p>
         )}
-        <div className="mt-4 flex gap-3">
-          <button
-            type="button"
-            disabled={busy || reingest.isPending}
-            onClick={() => reingest.mutate()}
-            className="rounded border border-slate-300 px-3 py-1 text-sm disabled:opacity-40"
-          >
-            Re-run validation
-          </button>
-          <button
-            type="button"
-            disabled={busy || remove.isPending}
-            onClick={() => {
-              if (window.confirm(`Delete dataset "${d.name}"?`)) remove.mutate();
-            }}
-            className="rounded border border-red-200 px-3 py-1 text-sm text-red-700 disabled:opacity-40"
-          >
-            Delete
-          </button>
-        </div>
+        {jobError && (
+          <div className="mt-4">
+            <Callout role="alert" tone="danger" icon={<TriangleAlert />}>
+              Ingestion failed: {jobError.message} <span className="font-mono text-xs">({jobError.code})</span>
+            </Callout>
+          </div>
+        )}
         {(reingest.error || remove.error) && (
           <div className="mt-3">
             <ErrorMessage error={reingest.error ?? remove.error} />
           </div>
         )}
-      </section>
+      </Card>
 
       {report.data && <ReportView datasetId={d.id} report={report.data} />}
 
       {hasReport && (
-        <section aria-labelledby="designs-heading" className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 id="designs-heading" className="mb-3 text-lg font-semibold text-slate-800">
-            Designs
-          </h2>
-          {designs.error && <ErrorMessage error={designs.error} />}
-          {designs.data && designs.data.pages[0]?.items.length === 0 && (
-            <p className="text-sm text-slate-500">No valid designs were stored.</p>
+        <Card
+          title="Designs"
+          icon={<Boxes className="size-4" />}
+          actions={
+            allDesigns.length > 0 && (
+              <label className="relative block w-full sm:w-64">
+                <span className="sr-only">Filter designs</span>
+                <Search aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-subtle" />
+                <Input
+                  type="search"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Filter by ID or name"
+                  className="h-8 pl-8"
+                />
+              </label>
+            )
+          }
+        >
+          {designs.isPending && <LoadingBlock label="Loading designs…" rows={4} />}
+          {designs.error && <ErrorMessage error={designs.error} onRetry={() => void designs.refetch()} />}
+          {designs.data && allDesigns.length === 0 && (
+            <EmptyState icon={<Boxes className="size-5" />} title="No valid designs were stored.">
+              See the validation report above for the reasons.
+            </EmptyState>
           )}
-          {designs.data && (designs.data.pages[0]?.items.length ?? 0) > 0 && (
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
-                <tr>
-                  <th className="py-2 pr-4">Design ID</th>
-                  <th className="py-2 pr-4">Name</th>
-                  <th className="py-2 pr-4 text-right">Scaffold (nt)</th>
-                  <th className="py-2 pr-4 text-right">Staples</th>
-                  <th className="py-2 pr-4 text-right">Candidate variants</th>
-                  <th className="py-2">Imported measurements</th>
-                </tr>
-              </thead>
-              <tbody>
-                {designs.data.pages.flatMap((p) => p.items).map((s) => (
-                  <tr key={s.id} className="border-b border-slate-100 last:border-0">
-                    <td className="py-2 pr-4 font-mono text-xs">
-                      <Link to={`/designs/${s.id}`} className="underline-offset-2 hover:underline">
-                        {s.external_id}
-                      </Link>
-                    </td>
-                    <td className="py-2 pr-4">{s.name ?? "—"}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{s.scaffold_length ?? "—"}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{s.staple_count}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{s.candidate_count}</td>
-                    <td className="py-2 text-xs">{s.measurement_names.join(", ") || "—"}</td>
+          {allDesigns.length > 0 && (
+            <Table sticky maxHeight="32rem">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Design ID</th>
+                    <th>Name</th>
+                    <th className="text-right">Scaffold (nt)</th>
+                    <th className="text-right">Staples</th>
+                    <th className="text-right">Candidate variants</th>
+                    <th>Imported measurements</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {shown.map((s) => (
+                    <tr key={s.id}>
+                      <td className="font-mono text-xs">
+                        <Link to={`/designs/${s.id}`} className="text-primary hover:underline">
+                          {s.external_id}
+                        </Link>
+                      </td>
+                      <td>{s.name ?? "—"}</td>
+                      <td className="text-right font-mono">{formatCount(s.scaffold_length)}</td>
+                      <td className="text-right font-mono">{formatCount(s.staple_count)}</td>
+                      <td className="text-right font-mono">{formatCount(s.candidate_count)}</td>
+                      <td className="text-xs text-muted">{s.measurement_names.join(", ") || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {shown.length === 0 && <p className="py-4 text-center text-sm text-muted">No loaded design matches “{filter}”.</p>}
+            </Table>
           )}
           {designs.hasNextPage && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-3"
+              loading={designs.isFetchingNextPage}
               onClick={() => void designs.fetchNextPage()}
-              disabled={designs.isFetchingNextPage}
-              className="mt-3 text-sm text-slate-600 underline"
             >
               Load more
-            </button>
+            </Button>
           )}
-        </section>
+          <p className="mt-2 text-xs text-subtle">
+            {formatCount(allDesigns.length)} design{allDesigns.length === 1 ? "" : "s"} loaded
+            {needle ? `, ${formatCount(shown.length)} shown` : ""}. Filtering applies to loaded designs.
+          </p>
+        </Card>
       )}
+      <Link to="/datasets" className="text-sm text-muted hover:text-fg">
+        ← Datasets
+      </Link>
     </div>
   );
 }

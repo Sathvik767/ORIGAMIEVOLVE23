@@ -1,8 +1,15 @@
+import { ChevronRight, CircleCheck, CircleX, ClipboardCheck, Download, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 
 import { downloadReport, type ReportSummary } from "../../api/client";
 import { ErrorMessage } from "../../components/ErrorMessage";
+import { Badge } from "../../components/ui/Badge";
+import { Button } from "../../components/ui/Button";
+import { Card } from "../../components/ui/Card";
+import { Callout } from "../../components/ui/Feedback";
+import { StatCard } from "../../components/ui/StatCard";
 import { describeIssue } from "../../lib/errorCodes";
+import { formatCount } from "../../lib/format";
 
 interface Sample {
   code: string;
@@ -14,94 +21,103 @@ interface Sample {
 
 export function ReportView({ datasetId, report }: { datasetId: string; report: ReportSummary }) {
   const [downloadError, setDownloadError] = useState<unknown>(null);
-  const codes = [
-    ...Object.entries(report.errors_by_code).map(([code, count]) => ({ code, count, severity: "error" as const })),
-    ...Object.entries(report.warnings_by_code).map(([code, count]) => ({ code, count, severity: "warning" as const })),
-  ];
+  const groups = [
+    { severity: "error" as const, title: "Errors", entries: Object.entries(report.errors_by_code) },
+    { severity: "warning" as const, title: "Warnings", entries: Object.entries(report.warnings_by_code) },
+  ].filter((g) => g.entries.length > 0);
   const locationLabel = report.location_kind === "index" ? "Element" : "Line";
 
   return (
-    <section aria-labelledby="report-heading" className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 id="report-heading" className="text-lg font-semibold text-slate-800">
-          Validation report
-        </h2>
-        <button
-          type="button"
-          onClick={() => downloadReport(datasetId).catch(setDownloadError)}
-          className="text-sm text-slate-600 underline hover:text-slate-900"
-        >
+    <Card
+      title="Validation report"
+      icon={<ClipboardCheck className="size-4" />}
+      actions={
+        <Button size="sm" icon={<Download aria-hidden className="size-3.5" />} onClick={() => downloadReport(datasetId).catch(setDownloadError)}>
           Download full report (JSON)
-        </button>
-      </div>
-      {downloadError !== null && <ErrorMessage error={downloadError} />}
+        </Button>
+      }
+    >
+      {downloadError !== null && (
+        <div className="mb-4">
+          <ErrorMessage error={downloadError} />
+        </div>
+      )}
 
-      <dl className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {[
-          ["Records read", report.records_read],
-          ["Valid designs", report.designs_valid],
-          ["Rejected designs", report.designs_invalid],
-          ["Errors", report.error_count],
-          ["Warnings", report.warning_count],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
-            <dt className="text-xs text-slate-500">{label}</dt>
-            <dd className="text-lg font-semibold tabular-nums">{value}</dd>
-          </div>
-        ))}
+      <dl className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <StatCard label="Records read" value={formatCount(report.records_read)} />
+        <StatCard label="Valid designs" value={formatCount(report.designs_valid)} />
+        <StatCard label="Rejected designs" value={formatCount(report.designs_invalid)} />
+        <StatCard label="Errors" value={formatCount(report.error_count)} tone="danger" />
+        <StatCard label="Warnings" value={formatCount(report.warning_count)} tone="warning" />
       </dl>
 
       {report.fatal && (
-        <p role="alert" className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-          <strong>Ingestion stopped:</strong> {String(report.fatal.message)} ({String(report.fatal.code)})
-        </p>
+        <div className="mb-4">
+          <Callout role="alert" tone="danger" icon={<CircleX />}>
+            <strong>Ingestion stopped:</strong> {String(report.fatal.message)} ({String(report.fatal.code)})
+          </Callout>
+        </div>
       )}
 
-      {codes.length === 0 ? (
-        <p className="text-sm text-emerald-800">No problems found.</p>
+      {groups.length === 0 ? (
+        <p className="flex items-center gap-2 text-sm text-success">
+          <CircleCheck aria-hidden className="size-4" />
+          No problems found.
+        </p>
       ) : (
-        <div className="space-y-4">
-          <p className="text-xs text-slate-500">
-            Designs with any error are rejected whole; only valid designs are stored.
-          </p>
-          {codes.map(({ code, count, severity }) => (
-            <details key={code} className="rounded border border-slate-200">
-              <summary className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm">
-                <span className={`font-mono text-xs ${severity === "error" ? "text-red-700" : "text-amber-700"}`}>
-                  {code}
-                </span>
-                <span className="flex-1 text-slate-700">{describeIssue(code)}</span>
-                <span className="tabular-nums text-slate-500">{count}</span>
-              </summary>
-              <table className="w-full border-t border-slate-100 text-left text-xs">
-                <thead className="text-slate-500">
-                  <tr>
-                    <th className="px-3 py-1">{locationLabel}</th>
-                    <th className="px-3 py-1">Design</th>
-                    <th className="px-3 py-1">Field</th>
-                    <th className="px-3 py-1">Message</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {((report.samples[code] ?? []) as unknown as Sample[]).map((s, i) => (
-                    <tr key={i} className="border-t border-slate-50">
-                      <td className="px-3 py-1 tabular-nums">{s.location ?? "—"}</td>
-                      <td className="px-3 py-1 font-mono">{s.design_id ?? "—"}</td>
-                      <td className="px-3 py-1 font-mono">{s.field ?? "—"}</td>
-                      <td className="px-3 py-1">{s.message}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {count > (report.samples[code]?.length ?? 0) && (
-                <p className="border-t border-slate-100 px-3 py-1 text-xs text-slate-500">
-                  Showing {report.samples[code]?.length ?? 0} of {count}. Download the full report for all.
-                </p>
-              )}
-            </details>
+        <div className="space-y-5">
+          <p className="text-xs text-muted">Designs with any error are rejected whole; only valid designs are stored.</p>
+          {groups.map((g) => (
+            <div key={g.severity} className="space-y-2">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                {g.severity === "error" ? (
+                  <CircleX aria-hidden className="size-4 text-danger" />
+                ) : (
+                  <TriangleAlert aria-hidden className="size-4 text-accent" />
+                )}
+                {g.title}
+              </h3>
+              {g.entries.map(([code, count]) => (
+                <details key={code} className="group rounded-lg border border-border bg-surface-sunken/40">
+                  <summary className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-surface-raised">
+                    <ChevronRight aria-hidden className="size-4 shrink-0 text-subtle transition-transform duration-150 group-open:rotate-90" />
+                    <span className={`font-mono text-xs ${g.severity === "error" ? "text-danger" : "text-accent"}`}>{code}</span>
+                    <span className="min-w-0 flex-1 text-fg/90">{describeIssue(code)}</span>
+                    <Badge tone={g.severity === "error" ? "danger" : "warning"}>{formatCount(count)}</Badge>
+                  </summary>
+                  <div className="overflow-x-auto border-t border-border">
+                    <table className="w-full text-left text-xs">
+                      <thead className="text-muted">
+                        <tr>
+                          <th className="px-3 py-1.5 font-medium">{locationLabel}</th>
+                          <th className="px-3 py-1.5 font-medium">Design</th>
+                          <th className="px-3 py-1.5 font-medium">Field</th>
+                          <th className="px-3 py-1.5 font-medium">Message</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {((report.samples[code] ?? []) as unknown as Sample[]).map((s, i) => (
+                          <tr key={i} className="border-t border-border/60">
+                            <td className="px-3 py-1.5 font-mono">{s.location ?? "—"}</td>
+                            <td className="px-3 py-1.5 font-mono">{s.design_id ?? "—"}</td>
+                            <td className="px-3 py-1.5 font-mono">{s.field ?? "—"}</td>
+                            <td className="px-3 py-1.5">{s.message}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {count > (report.samples[code]?.length ?? 0) && (
+                    <p className="border-t border-border px-3 py-1.5 text-xs text-muted">
+                      Showing {report.samples[code]?.length ?? 0} of {count}. Download the full report for all.
+                    </p>
+                  )}
+                </details>
+              ))}
+            </div>
           ))}
         </div>
       )}
-    </section>
+    </Card>
   );
 }

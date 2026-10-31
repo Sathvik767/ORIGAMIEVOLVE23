@@ -27,8 +27,14 @@ export function bestFitness(job: JobOut): number | undefined {
   return typeof fromProgress === "number" ? fromProgress : undefined;
 }
 
+/** Fitness for display: 4 decimals (use fullFitness for the exact stored value, e.g. in a title). */
 export function formatFitness(value: number | undefined): string {
-  return value === undefined ? "—" : value.toFixed(6);
+  return value === undefined ? "—" : value.toFixed(4);
+}
+
+/** The stored value at full precision, for tooltips and copying. */
+export function fullFitness(value: number | undefined): string | undefined {
+  return value === undefined ? undefined : String(value);
 }
 
 export function newIdempotencyKey(): string {

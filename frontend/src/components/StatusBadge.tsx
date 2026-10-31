@@ -1,20 +1,31 @@
-const STYLES: Record<string, string> = {
-  uploaded: "bg-slate-100 text-slate-700",
-  queued: "bg-slate-100 text-slate-700",
-  ingesting: "bg-sky-100 text-sky-800",
-  running: "bg-sky-100 text-sky-800",
-  ready: "bg-emerald-100 text-emerald-800",
-  completed: "bg-emerald-100 text-emerald-800",
-  ready_with_errors: "bg-amber-100 text-amber-900",
-  partially_failed: "bg-amber-100 text-amber-900",
-  failed: "bg-red-100 text-red-800",
-  cancelled: "bg-slate-200 text-slate-600",
+import { Ban, CircleCheck, CircleDashed, CircleX, Clock, LoaderCircle, TriangleAlert } from "lucide-react";
+import type { ReactNode } from "react";
+
+import { Badge, type Tone } from "./ui/Badge";
+
+const STYLES: Record<string, { tone: Tone; icon: ReactNode }> = {
+  uploaded: { tone: "neutral", icon: <CircleDashed aria-hidden className="size-3" /> },
+  queued: { tone: "neutral", icon: <Clock aria-hidden className="size-3" /> },
+  ingesting: { tone: "info", icon: <LoaderCircle aria-hidden className="size-3 motion-safe:animate-spin" /> },
+  running: { tone: "info", icon: <LoaderCircle aria-hidden className="size-3 motion-safe:animate-spin" /> },
+  validating: { tone: "info", icon: <LoaderCircle aria-hidden className="size-3 motion-safe:animate-spin" /> },
+  converting: { tone: "info", icon: <LoaderCircle aria-hidden className="size-3 motion-safe:animate-spin" /> },
+  ready: { tone: "success", icon: <CircleCheck aria-hidden className="size-3" /> },
+  completed: { tone: "success", icon: <CircleCheck aria-hidden className="size-3" /> },
+  topology_only: { tone: "info", icon: <CircleDashed aria-hidden className="size-3" /> },
+  ready_with_errors: { tone: "warning", icon: <TriangleAlert aria-hidden className="size-3" /> },
+  partially_failed: { tone: "warning", icon: <TriangleAlert aria-hidden className="size-3" /> },
+  awaiting_configuration: { tone: "warning", icon: <Clock aria-hidden className="size-3" /> },
+  failed: { tone: "danger", icon: <CircleX aria-hidden className="size-3" /> },
+  invalid: { tone: "danger", icon: <CircleX aria-hidden className="size-3" /> },
+  cancelled: { tone: "neutral", icon: <Ban aria-hidden className="size-3" /> },
 };
 
 export function StatusBadge({ status }: { status: string }) {
+  const style = STYLES[status] ?? STYLES.uploaded!;
   return (
-    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STYLES[status] ?? STYLES.uploaded}`}>
+    <Badge tone={style.tone} icon={style.icon}>
       {status.replaceAll("_", " ")}
-    </span>
+    </Badge>
   );
 }

@@ -181,18 +181,18 @@ describe("demo objective display and exhaustive results", () => {
     const jobs = screen.getByRole("region", { name: "Jobs" });
     const row = within(jobs).getByText("synthetic_00000").closest("tr")!;
     expect(row).toHaveTextContent("exhaustive");
-    expect(row).toHaveTextContent("mean GC deviation = 0.062500 (lower is better)");
-    expect(row).toHaveTextContent("score -0.062500");
+    expect(row).toHaveTextContent("mean GC deviation = 0.0625 (lower is better)");
+    expect(row).toHaveTextContent("score -0.0625");
 
     const panel = await screen.findByRole("region", { name: /Analysis: synthetic_00000/ });
     expect(within(panel).getByText("Method").nextSibling).toHaveTextContent("Exhaustive search");
-    expect(within(panel).getByText("Best").nextSibling).toHaveTextContent("mean GC deviation = 0.062500 (lower is better)");
+    expect(within(panel).getByText("Best").nextSibling).toHaveTextContent("mean GC deviation = 0.0625 (lower is better)");
     expect(within(panel).getByText("Combinations scored").nextSibling).toHaveTextContent("8");
     expect(within(panel).getByText(/no GA generations were run/)).toBeInTheDocument();
     expect(within(panel).queryByRole("img", { name: /Best and mean fitness/ })).not.toBeInTheDocument();
     expect(within(panel).getByText("Candidate ranking (all combinations)")).toBeInTheDocument();
     const top = within(panel).getByText("(selected)").closest("tr")!;
-    expect(top).toHaveTextContent("mean GC deviation = 0.062500");
+    expect(top).toHaveTextContent("mean GC deviation = 0.0625");
     expect(within(panel).getByText(/Not applicable: exhaustive search has no population/)).toBeInTheDocument();
     expect(within(panel).getByText(/not evidence that the design folds/)).toBeInTheDocument();
   });

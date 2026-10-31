@@ -1,11 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
+import { FlaskConical, KeyRound, Layers } from "lucide-react";
 import { Link } from "react-router";
 
 import { api } from "../../api/client";
 import { ErrorMessage } from "../../components/ErrorMessage";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useToken } from "../../components/TokenContext";
-import { formatDate } from "../../lib/format";
+import { Card } from "../../components/ui/Card";
+import { EmptyState, LoadingBlock, ProgressBar } from "../../components/ui/Feedback";
+import { RelativeTime } from "../../components/ui/RelativeTime";
+import { Table } from "../../components/ui/Table";
+import { formatCount } from "../../lib/format";
 import { isBatchActive, POLL_INTERVAL_MS } from "./status";
 
 export function BatchList() {
@@ -24,56 +29,77 @@ export function BatchList() {
   const datasetName = new Map((datasets.data?.items ?? []).map((d) => [d.id, d.name]));
 
   return (
-    <section aria-labelledby="batches-heading" className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 id="batches-heading" className="mb-3 text-lg font-semibold text-slate-800">
-        Batches
-      </h2>
-      {!token && <p className="text-sm text-slate-500">Set an API token in the header to see batches.</p>}
-      {token && batches.isPending && <p className="text-sm text-slate-500">Loading…</p>}
-      {batches.error && <ErrorMessage error={batches.error} />}
+    <Card title="Batches" icon={<Layers className="size-4" />}>
+      {!token && <EmptyState icon={<KeyRound className="size-5" />} title="Set an API token in the sidebar to see batches." />}
+      {token && batches.isPending && <LoadingBlock label="Loading batches…" rows={4} />}
+      {batches.error && <ErrorMessage error={batches.error} onRetry={() => void batches.refetch()} />}
       {batches.data && batches.data.items.length === 0 && (
-        <p className="text-sm text-slate-500">No batches yet. Start one above.</p>
+        <EmptyState icon={<FlaskConical className="size-5" />} title="No batches yet. Start one above.">
+          Choose a validated dataset, select designs and start your first batch.
+        </EmptyState>
       )}
       {batches.data && batches.data.items.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+        <Table>
+          <table>
+            <thead>
               <tr>
-                <th className="py-2 pr-4">Batch</th>
-                <th className="py-2 pr-4">Dataset</th>
-                <th className="py-2 pr-4">Created</th>
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2 pr-4 text-right">Jobs</th>
-                <th className="py-2 pr-4 text-right">Completed</th>
-                <th className="py-2 pr-4 text-right">Failed</th>
-                <th className="py-2 pr-4 text-right">Running</th>
-                <th className="py-2 text-right">Queued</th>
+                <th>Batch</th>
+                <th>Dataset</th>
+                <th>Created</th>
+                <th>Status</th>
+                <th>Progress</th>
+                <th className="text-right">Jobs</th>
+                <th className="text-right">Completed</th>
+                <th className="text-right">Failed</th>
+                <th className="text-right">Running</th>
+                <th className="text-right">Queued</th>
               </tr>
             </thead>
             <tbody>
-              {batches.data.items.map((b) => (
-                <tr key={b.id} className="border-b border-slate-100 last:border-0">
-                  <td className="py-2 pr-4">
-                    <Link to={`/batches/${b.id}`} className="font-medium text-slate-900 underline-offset-2 hover:underline">
-                      {b.name ?? <span className="font-mono text-xs">{b.id}</span>}
-                    </Link>
-                  </td>
-                  <td className="py-2 pr-4">{datasetName.get(b.dataset_id) ?? <span className="font-mono text-xs">{b.dataset_id}</span>}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap text-slate-500">{formatDate(b.created_at)}</td>
-                  <td className="py-2 pr-4">
-                    <StatusBadge status={b.status} />
-                  </td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{b.total_jobs}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{b.counts.completed ?? "—"}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{b.counts.failed ?? "—"}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{b.counts.running ?? "—"}</td>
-                  <td className="py-2 text-right tabular-nums">{b.counts.queued ?? "—"}</td>
-                </tr>
-              ))}
+              {batches.data.items.map((b) => {
+                const finished = (b.counts.completed ?? 0) + (b.counts.failed ?? 0) + (b.counts.cancelled ?? 0);
+                return (
+                  <tr key={b.id}>
+                    <td>
+                      <Link to={`/batches/${b.id}`} className="font-medium text-fg hover:text-primary hover:underline">
+                        {b.name ?? <span className="font-mono text-xs">{b.id}</span>}
+                      </Link>
+                      <div className="font-mono text-xs text-subtle">
+                        {b.fitness.name}
+                        {b.method ? ` · ${b.method}` : ""}
+                      </div>
+                    </td>
+                    <td className="text-muted">{datasetName.get(b.dataset_id) ?? <span className="font-mono text-xs">{b.dataset_id}</span>}</td>
+                    <td className="whitespace-nowrap text-muted">
+                      <RelativeTime iso={b.created_at} />
+                    </td>
+                    <td>
+                      <StatusBadge status={b.status} />
+                    </td>
+                    <td className="min-w-28">
+                      <ProgressBar
+                        label={`${finished} of ${b.total_jobs} jobs finished`}
+                        value={finished}
+                        max={b.total_jobs}
+                        segments={[
+                          { value: b.counts.completed ?? 0, tone: "success" },
+                          { value: b.counts.failed ?? 0, tone: "danger" },
+                          { value: b.counts.cancelled ?? 0, tone: "neutral" },
+                        ]}
+                      />
+                    </td>
+                    <td className="text-right font-mono">{formatCount(b.total_jobs)}</td>
+                    <td className="text-right font-mono text-success">{formatCount(b.counts.completed)}</td>
+                    <td className="text-right font-mono text-danger">{formatCount(b.counts.failed)}</td>
+                    <td className="text-right font-mono text-info">{formatCount(b.counts.running)}</td>
+                    <td className="text-right font-mono text-muted">{formatCount(b.counts.queued)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-        </div>
+        </Table>
       )}
-    </section>
+    </Card>
   );
 }
